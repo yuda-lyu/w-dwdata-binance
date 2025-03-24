@@ -18,7 +18,7 @@ npm i w-dwdata-binance
 ```
 
 #### Example:
-> **Link:** [[dev source code](https://github.com/yuda-lyu/w-dwdata-binance/blob/master/g.mjs)]
+> **Link:** [[dev source code](https://github.com/yuda-lyu/w-dwdata-binance/blob/master/g-BTCUSDT.mjs.mjs)]
 ```alias
 import WDwdataBinace from 'w-dwdata-binance'
 
