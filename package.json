@@ -1,0 +1,31 @@
+{
+  "name": "w-dwdata-binance",
+  "version": "1.0.0",
+  "main": "dist/w-dwdata-binance.umd.js",
+  "dependencies": {
+    "axios": "^1.8.4",
+    "lodash-es": "^4.17.21",
+    "wsemi": "^1.7.72"
+  },
+  "devDependencies": {
+    "w-package-tools": "^1.0.82"
+  },
+  "scripts": {
+    "test": "mocha --parallel --timeout 60000 --experimental-modules",
+    "deploy": "gh-pages -d docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuda-lyu/w-dwdata-binance.git"
+  },
+  "keywords": [
+    "package",
+    "tool",
+    "download",
+    "data",
+    "binance",
+    "nodejs"
+  ],
+  "author": "yuda-lyu(semisphere)",
+  "license": "MIT"
+}
