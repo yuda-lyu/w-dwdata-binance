@@ -170,7 +170,7 @@ let saveData = async(name, type, endpoint, symbol, opt = {}) => {
         }
     }
 
-    //偵測既有檔案與下載
+    //偵測既有檔案不抓, 若沒檔案就下載
     if (true) {
         let up = size(rts) - 1
         let k = -1

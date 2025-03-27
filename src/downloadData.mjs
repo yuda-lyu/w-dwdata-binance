@@ -120,12 +120,12 @@ let downloadData = async (endpoint, symbol, timeStart, timeEnd, interval, opt = 
                 v[3], // 最低價
                 v[4], // 收盤價
                 v[5], // 成交量, index無此數據
-                // ot(v[6]).format('YYYY-MM-DDTHH:mm:ss'), //結束時間
-                // v[7], // 成交金額, index無此數據
-                // v[8], // 成交筆數, index無此數據
-                // v[9], // 主動買入成交量, index無此數據
-                // v[10], // 主動買入成交金額, index無此數據
-                // // v[11] // 忽略此欄位, index無此數據
+                ot(v[6]).format('YYYY-MM-DDTHH:mm:ss'), //結束時間
+                v[7], // 成交金額, index無此數據
+                v[8], // 成交筆數, index無此數據
+                v[9], // 主動買入成交量, index無此數據
+                v[10], // 主動買入成交金額, index無此數據
+                // v[11] // 忽略此欄位, index無此數據
             ]
         })
 
