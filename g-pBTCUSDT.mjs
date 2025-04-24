@@ -31,4 +31,4 @@ function test() {
 test()
 
 
-//node --experimental-modules g-pBTCUSDT.mjs
+//node g-pBTCUSDT.mjs

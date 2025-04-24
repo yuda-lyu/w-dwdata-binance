@@ -34,4 +34,4 @@ test()
 //continuing...
 
 
-//node --experimental-modules g-BTCUSDT.mjs
+//node g-BTCUSDT.mjs
