@@ -221,14 +221,25 @@ let saveData = async(name, type, endpoint, symbol, opt = {}) => {
                 continue
             }
 
-            //cs
             if (useShowLog) {
                 console.log(`get ${name} ${type} ts[${ts}] -> te[${te}] downloading...`)
             }
+
+            //cs
             let cs = await downloadData(endpoint, symbol, ts, te, dataInterval, {
                 proxy,
                 useConvertToCsv,
             })
+
+            //check
+            if (!isestr(cs)) {
+                if (useShowLog) {
+                    console.log(`get ${name} ${type} ts[${ts}] -> te[${te}] no data`)
+                }
+                // console.log(tag, 'cs', cs)
+                continue
+            }
+
             if (useShowLog) {
                 console.log(`get ${name} ${type} ts[${ts}] -> te[${te}] finish`)
             }

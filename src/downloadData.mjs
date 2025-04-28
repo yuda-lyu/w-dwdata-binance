@@ -92,6 +92,7 @@ let downloadData = async (endpoint, symbol, timeStart, timeEnd, interval, opt = 
     // // console.log('url', url)
 
     //rs
+    let url = ''
     let rs = []
     try {
 
@@ -107,6 +108,10 @@ let downloadData = async (endpoint, symbol, timeStart, timeEnd, interval, opt = 
             // proxy,
         })
         let res = response.data
+
+        //url
+        url = get(response, 'request.res.responseUrl', '')
+        // console.log('url',url)
 
         //delay
         await delay(100) //幣安limit: 2400 requests per minute
@@ -136,6 +141,7 @@ let downloadData = async (endpoint, symbol, timeStart, timeEnd, interval, opt = 
 
     //check
     if (size(rs) === 0) {
+        console.log('url', url)
         console.log(`invalid k-data for symbol[${symbol}]`)
         return
     }
