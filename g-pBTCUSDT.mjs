@@ -22,13 +22,24 @@ function test() {
     let symbol = 'pBTCUSDT'
 
     //p
-    let p = wdd.syncData(name, type, endpoint, symbol, { useShowLog: true })
+    let p = wdd.syncData(name, type, endpoint, symbol, {
+        dayStart: '2025-04-18',
+        interval: '1hr',
+        useShowLog: true,
+    })
 
     //run
     p.run()
 
 }
 test()
+// get BTC index [2025-04-18T00:00:00] -> [2025-04-19T23:59:59] downloading...
+// get BTC index [2025-04-18T00:00:00] -> [2025-04-19T23:59:59] finish
+// get BTC index [2025-04-20T00:00:00] -> [2025-04-21T23:59:59] downloading...
+// get BTC index [2025-04-20T00:00:00] -> [2025-04-21T23:59:59] finish
+// get BTC index [2025-04-22T00:00:00] -> [2025-04-23T23:59:59] downloading...
+// get BTC index [2025-04-22T00:00:00] -> [2025-04-23T23:59:59] finish
+// ...
 
 
 //node g-pBTCUSDT.mjs

@@ -19,19 +19,24 @@ function test() {
     let symbol = 'BTCUSDT'
 
     //p
-    let p = wdd.syncData(name, type, endpoint, symbol, { useShowLog: true })
+    let p = wdd.syncData(name, type, endpoint, symbol, {
+        dayStart: '2025-04-18',
+        interval: '1hr',
+        useShowLog: true,
+    })
 
     //run
     p.run()
 
 }
 test()
-//get BTC price ts[2020-01-02T11:00:00] -> te[2020-01-02T11:59:59] downloading...
-//get BTC price ts[2020-01-02T11:00:00] -> te[2020-01-02T11:59:59] finish
-//get BTC price ts[2020-01-02T12:00:00] -> te[2020-01-02T12:59:59] downloading...
-//get BTC price ts[2020-01-02T12:00:00] -> te[2020-01-02T12:59:59] finish
-//get BTC price ts[2020-01-02T13:00:00] -> te[2020-01-02T13:59:59] downloading...
-//continuing...
+// get BTC price [2025-04-18T00:00:00] -> [2025-04-19T23:59:59] downloading...
+// get BTC price [2025-04-18T00:00:00] -> [2025-04-19T23:59:59] finish
+// get BTC price [2025-04-20T00:00:00] -> [2025-04-21T23:59:59] downloading...
+// get BTC price [2025-04-20T00:00:00] -> [2025-04-21T23:59:59] finish
+// get BTC price [2025-04-22T00:00:00] -> [2025-04-23T23:59:59] downloading...
+// get BTC price [2025-04-22T00:00:00] -> [2025-04-23T23:59:59] finish
+// ...
 
 
 //node g-BTCUSDT.mjs
