@@ -601,7 +601,7 @@
 
     
 
-    <h4 class="name" id="saveData"><span class="type-signature type-signature-async">(async) </span>saveData<span class="signature">(name, type, endpoint, symbol, opt<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
+    <h4 class="name" id="saveData"><span class="type-signature type-signature-async">(async) </span>saveData<span class="signature">(name, type, endpoint, symbol, interval, opt<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
 
     
 
@@ -618,7 +618,7 @@
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="saveData.mjs.html">saveData.mjs</a>, <a href="saveData.mjs.html#line19">line 19</a>
+        <a href="saveData.mjs.html">saveData.mjs</a>, <a href="saveData.mjs.html#line18">line 18</a>
     </li></ul></dd>
     
 
@@ -700,7 +700,7 @@
             <td class="type">
             
                 
-<span class="param-type">string</span>
+<span class="param-type">String</span>
 
 
 
@@ -736,7 +736,7 @@
             <td class="type">
             
                 
-<span class="param-type">string</span>
+<span class="param-type">String</span>
 
 
 
@@ -772,7 +772,7 @@
             <td class="type">
             
                 
-<span class="param-type">string</span>
+<span class="param-type">String</span>
 
 
 
@@ -808,7 +808,7 @@
             <td class="type">
             
                 
-<span class="param-type">string</span>
+<span class="param-type">String</span>
 
 
 
@@ -832,6 +832,42 @@
             
 
             <td class="description last"><p>幣種交易對，例如 'BTCUSDT'</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>interval</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>K 線間隔（如 '1m', '1h' 等）</p></td>
         </tr>
 
     
@@ -901,13 +937,13 @@
 
         <tr>
             
-                <td class="name"><code>gTimeStart</code></td>
+                <td class="name"><code>dayStart</code></td>
             
 
             <td class="type">
             
                 
-<span class="param-type">string</span>
+<span class="param-type">String</span>
 
 
 
@@ -929,92 +965,12 @@
             
                 <td class="default">
                 
-                    <code>'2020-01-01T00:00:00'</code>
+                    <code>'2020-01-01'</code>
                 
                 </td>
             
 
             <td class="description last"><p>抓取起始時間（ISO 格式）</p></td>
-        </tr>
-
-    
-
-        <tr>
-            
-                <td class="name"><code>dataInterval</code></td>
-            
-
-            <td class="type">
-            
-                
-<span class="param-type">string</span>
-
-
-
-            
-            </td>
-
-            
-                <td class="attributes">
-                
-                    &lt;optional><br>
-                
-
-                
-
-                
-                </td>
-            
-
-            
-                <td class="default">
-                
-                    <code>'1m'</code>
-                
-                </td>
-            
-
-            <td class="description last"><p>K 線間隔（如 '1m', '1h' 等）</p></td>
-        </tr>
-
-    
-
-        <tr>
-            
-                <td class="name"><code>dataNum</code></td>
-            
-
-            <td class="type">
-            
-                
-<span class="param-type">number</span>
-
-
-
-            
-            </td>
-
-            
-                <td class="attributes">
-                
-                    &lt;optional><br>
-                
-
-                
-
-                
-                </td>
-            
-
-            
-                <td class="default">
-                
-                    <code>60</code>
-                
-                </td>
-            
-
-            <td class="description last"><p>每小時應該抓取的資料筆數（預設 60，對應 1 分鐘線）</p></td>
         </tr>
 
     
@@ -1027,7 +983,7 @@
             <td class="type">
             
                 
-<span class="param-type">string</span>
+<span class="param-type">String</span>
 
 
 
@@ -1105,7 +1061,7 @@
             <td class="type">
             
                 
-<span class="param-type">boolean</span>
+<span class="param-type">Boolean</span>
 
 
 
@@ -1145,7 +1101,7 @@
             <td class="type">
             
                 
-<span class="param-type">boolean</span>
+<span class="param-type">Boolean</span>
 
 
 
@@ -1532,13 +1488,13 @@
 
         <tr>
             
-                <td class="name"><code>gTimeStart</code></td>
+                <td class="name"><code>dayStart</code></td>
             
 
             <td class="type">
             
                 
-<span class="param-type">string</span>
+<span class="param-type">String</span>
 
 
 
@@ -1560,19 +1516,19 @@
             
                 <td class="default">
                 
-                    <code>'2020-01-01T00:00:00'</code>
+                    <code>'2020-01-01'</code>
                 
                 </td>
             
 
-            <td class="description last"><p>抓取起始時間，ISO 字串格式</p></td>
+            <td class="description last"><p>抓取起始時間（ISO 格式）</p></td>
         </tr>
 
     
 
         <tr>
             
-                <td class="name"><code>dataInterval</code></td>
+                <td class="name"><code>interval</code></td>
             
 
             <td class="type">
@@ -1606,46 +1562,6 @@
             
 
             <td class="description last"><p>K 線時間間隔（如 '1m', '5m', '1h'）</p></td>
-        </tr>
-
-    
-
-        <tr>
-            
-                <td class="name"><code>dataNum</code></td>
-            
-
-            <td class="type">
-            
-                
-<span class="param-type">number</span>
-
-
-
-            
-            </td>
-
-            
-                <td class="attributes">
-                
-                    &lt;optional><br>
-                
-
-                
-
-                
-                </td>
-            
-
-            
-                <td class="default">
-                
-                    <code>60</code>
-                
-                </td>
-            
-
-            <td class="description last"><p>每小時應抓取的資料筆數（與 interval 對應）</p></td>
         </tr>
 
     
@@ -1960,7 +1876,7 @@
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.4</a> on Mon Apr 28 2025 14:18:33 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.4</a> on Thu May 01 2025 20:32:35 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>
