@@ -92,8 +92,9 @@ let syncData = (name, type, endpoint, symbol, opt = {}) => {
             useConvertToCsv,
             useShowLog,
         })
-            // .then(() => {
-            // })
+            .then((res) => {
+                // console.log('res', res)
+            })
             .catch((err) => {
                 console.log('err', err)
             })

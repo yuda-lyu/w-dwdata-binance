@@ -20,7 +20,7 @@ function test() {
 
     //p
     let p = wdd.syncData(name, type, endpoint, symbol, {
-        dayStart: '2025-04-18',
+        dayStart: '2025-09-08',
         interval: '1hr',
         useShowLog: true,
     })

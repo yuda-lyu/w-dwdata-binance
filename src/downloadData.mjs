@@ -116,16 +116,32 @@ let downloadData = async (endpoint, symbol, timeStart, timeEnd, interval, opt = 
         //delay
         await delay(100) //幣安limit: 2400 requests per minute
 
+        //timeDataMax
+        let timeDataMax = ot().format('YYYY-MM-DDTHH:mm:ss')
+
         //parse
         rs = map(res, (v) => {
+
+            //timeDataStart
+            let timeDataStart = ot(v[0]).format('YYYY-MM-DDTHH:mm:ss')
+            // if (timeDataStart > timeDataMax) {
+            //     timeDataStart = timeDataMax
+            // }
+
+            //timeDataEnd
+            let timeDataEnd = ot(v[6]).format('YYYY-MM-DDTHH:mm:ss')
+            if (timeDataEnd > timeDataMax) {
+                timeDataEnd = timeDataMax
+            }
+
             return [
-                ot(v[0]).format('YYYY-MM-DDTHH:mm:ss'), //開始時間
+                timeDataStart, //開始時間
                 v[1], // 開盤價
                 v[2], // 最高價
                 v[3], // 最低價
                 v[4], // 收盤價
                 v[5], // 成交量, index無此數據
-                ot(v[6]).format('YYYY-MM-DDTHH:mm:ss'), //結束時間
+                timeDataEnd, //結束時間
                 v[7], // 成交金額, index無此數據
                 v[8], // 成交筆數, index無此數據
                 v[9], // 主動買入成交量, index無此數據

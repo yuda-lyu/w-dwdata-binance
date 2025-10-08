@@ -16,7 +16,7 @@ import downloadData from './downloadData.mjs'
 
 
 /**
- * 根據指定的時間範圍與設定，自動抓取並儲存每小時的幣種 K 線資料（Kline）。
+ * 根據指定的時間範圍與設定，自動抓取並儲存指定時長的幣種 K 線資料（Kline）。
  * 若該小時已存在資料檔，且完整，則跳過；否則會下載並儲存成 CSV 檔。
  *
  * @async
@@ -130,8 +130,11 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
     let _timeStart = timeStart
     // console.log('_timeStart', _timeStart)
 
+    //now
+    let now = ot()
+
     //_timeEnd
-    let _timeEnd = ot().format('YYYY-MM-DDTHH:mm:ss')
+    let _timeEnd = now.format('YYYY-MM-DDTHH:mm:ss')
     // console.log('_timeEnd', _timeEnd)
 
     //rts, 生成_timeStart至_timeEnd內每4小時資訊
@@ -167,20 +170,21 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
     // console.log('rts', rts, size(rts))
 
     //偵測既有檔案不抓, 若沒檔案就下載
+    let csFin = ''
     if (true) {
+
+        //up
         let up = size(rts) - 1
+
         let k = -1
         while (true) {
             k++
-            if (k >= up) { //最末為下一個時間點(k=up), 不處理須跳出
+            if (k >= up) { //最末為下一個時間點(k=up), 為未來時間, 不須處理直接跳出
                 break
             }
 
             //bLast, 最新時間段預設一定要下載
             let bLast = k === up - 1
-
-            // //tagHour
-            // let tagHour = ot().format('YYYY-MM-DDTHH:00:00')
 
             //tag, ts
             let tag = get(rts, `${k}.tag`)
@@ -196,15 +200,22 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
 
             //ckComplete, 確認是否已下載
             let ckComplete = () => {
+
                 let c = fs.readFileSync(fp, 'utf8')
+
                 let s = sep(c, '\n')
+
                 let n = size(s)
-                let b = n !== dataNum //須每小時有dataNum筆
-                // let b2 = !haskey(kpTagNotComplete, tag) //須不在未完整名單中
-                // let b = b1 && b2
+
+                let b = n !== dataNum //未有dataNum筆
+                // let b2 = false //各筆之結束時間未完整
+                // let b = b1 || b2
                 if (b) {
                     console.log(`not complete: n[${n}]!==${dataNum}`, fp)
                 }
+
+                //若於當前時長內中斷不下載更新, 此時檔案內最末數據會不完全, 待下個時長再下載時, 數據筆數會相同, 故無法反應此不完全問題, 因考慮效能故忽略不計
+
                 return b
             }
 
@@ -212,7 +223,9 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
             let bNotExist = !fsIsFile(fp) //若指定時之檔案不存在就要下載
             let bNotComplete = null //若指定時之檔案不完整就要下載
             if (!bNotExist) {
+                // console.log('ckComplete', fp)
                 bNotComplete = ckComplete()
+                // console.log('ckComplete', fp, bNotComplete)
             }
             let b = bNotExist || bNotComplete || bLast
             if (!b) {
@@ -246,9 +259,40 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
             //save
             fs.writeFileSync(fp, cs, 'utf8')
 
+            //update
+            csFin = cs
+
         }
+
     }
 
+    //timeLast, timeKeep
+    let timeLast = '' //最新時間 //_timeEnd
+    let timeKeep = '' //最近數據不變時間 //now.add(-1, 'hour').format('YYYY-MM-DDTHH:mm:ss')
+    if (true) {
+
+        let s = sep(csFin, '\n')
+
+        let up = size(s) - 1
+
+        let l0 = get(s, up - 0, '')
+        let l1 = get(s, up - 1, '')
+
+        let gt = (l) => {
+            let ss = sep(l, ',')
+            let t = get(ss, 0)
+            return t
+        }
+
+        timeLast = gt(l0)
+        timeKeep = gt(l1)
+
+    }
+
+    return {
+        timeKeep,
+        timeLast,
+    }
 }
 
 
