@@ -12,6 +12,7 @@ A download tool for binace.
 To view documentation or get support, visit [docs](https://yuda-lyu.github.io/w-dwdata-binance/global.html).
 
 ## Installation
+
 ### Using npm(ES6 module):
 ```alias
 npm i w-dwdata-binance
