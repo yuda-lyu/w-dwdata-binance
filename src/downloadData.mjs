@@ -1,12 +1,19 @@
 import axios from 'axios'
 import ot from 'dayjs'
+import utc from 'dayjs/plugin/utc.js'
+import timezone from 'dayjs/plugin/timezone.js'
 import get from 'lodash-es/get.js'
 import map from 'lodash-es/map.js'
 import size from 'lodash-es/size.js'
 import join from 'lodash-es/join.js'
 import iseobj from 'wsemi/src/iseobj.mjs'
 import isbol from 'wsemi/src/isbol.mjs'
+import isestr from 'wsemi/src/isestr.mjs'
 import delay from 'wsemi/src/delay.mjs'
+
+
+ot.extend(utc)
+ot.extend(timezone)
 
 
 /**
@@ -20,6 +27,7 @@ import delay from 'wsemi/src/delay.mjs'
  * @param {string} timeEnd - 結束時間，格式為 'YYYY-MM-DDTHH:mm:ss'
  * @param {string} interval - K 線資料間隔時間，例如 '1m', '5m', '1h' 等
  * @param {Object} [opt={}] - 可選參數設定
+ * @param {String} [opt.timeZone='Asia/Taipei'] - 時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致
  * @param {Object} [opt.proxy] - 代理伺服器設定，符合 axios proxy 格式 `{ protocol, host, port }`
  * @param {boolean} [opt.useConvertToCsv=true] - 是否將結果轉換為 CSV 字串格式
  * @returns {Promise} 回傳Promise，resolve回傳解析後的 K 線資料陣列，或轉為 CSV 字串（依 useConvertToCsv 而定），reject回傳錯誤訊息
@@ -62,6 +70,45 @@ import delay from 'wsemi/src/delay.mjs'
  */
 let downloadData = async (endpoint, symbol, timeStart, timeEnd, interval, opt = {}) => {
 
+    //check
+    if (!isestr(endpoint)) {
+        throw new Error('invalid endpoint')
+    }
+
+    //check
+    if (!isestr(symbol)) {
+        throw new Error('invalid symbol')
+    }
+
+    //check
+    if (!isestr(timeStart)) {
+        throw new Error('invalid timeStart')
+    }
+
+    //check
+    if (!isestr(timeEnd)) {
+        throw new Error('invalid timeEnd')
+    }
+
+    //check
+    if (!isestr(interval)) {
+        throw new Error('invalid interval')
+    }
+
+    //timeZone
+    let timeZone = get(opt, 'timeZone')
+    if (!isestr(timeZone)) {
+        timeZone = 'Asia/Taipei'
+    }
+
+    //ott
+    let ott = (input) => {
+        if (input === undefined || input === null) {
+            return ot().tz(timeZone)
+        }
+        return ot.tz(input, timeZone)
+    }
+
     //proxy
     let proxy = get(opt, 'proxy')
     if (!iseobj(proxy)) {
@@ -78,12 +125,12 @@ let downloadData = async (endpoint, symbol, timeStart, timeEnd, interval, opt = 
     let limit = 1000 //每次請求的資料點數量, 最高1000
 
     //startTime
-    let startTime = ot(timeStart, 'YYYY-MM-DDTHH:mm:ss').valueOf()
+    let startTime = ott(timeStart, 'YYYY-MM-DDTHH:mm:ss').valueOf()
     // console.log('timeStart', timeStart)
     // console.log('startTime', startTime)
 
     //endTime
-    let endTime = ot(timeEnd, 'YYYY-MM-DDTHH:mm:ss').valueOf()
+    let endTime = ott(timeEnd, 'YYYY-MM-DDTHH:mm:ss').valueOf()
     // console.log('timeEnd', timeEnd)
     // console.log('endTime', endTime)
 
@@ -117,19 +164,19 @@ let downloadData = async (endpoint, symbol, timeStart, timeEnd, interval, opt = 
         await delay(100) //幣安limit: 2400 requests per minute
 
         //timeDataMax
-        let timeDataMax = ot().format('YYYY-MM-DDTHH:mm:ss')
+        let timeDataMax = ott().format('YYYY-MM-DDTHH:mm:ss')
 
         //parse
         rs = map(res, (v) => {
 
             //timeDataStart
-            let timeDataStart = ot(v[0]).format('YYYY-MM-DDTHH:mm:ss')
+            let timeDataStart = ott(v[0]).format('YYYY-MM-DDTHH:mm:ss')
             // if (timeDataStart > timeDataMax) {
             //     timeDataStart = timeDataMax
             // }
 
             //timeDataEnd
-            let timeDataEnd = ot(v[6]).format('YYYY-MM-DDTHH:mm:ss')
+            let timeDataEnd = ott(v[6]).format('YYYY-MM-DDTHH:mm:ss')
             if (timeDataEnd > timeDataMax) {
                 timeDataEnd = timeDataMax
             }
