@@ -1,13 +1,13 @@
 {
   "name": "w-dwdata-binance",
-  "version": "1.0.20",
+  "version": "1.0.21",
   "main": "dist/w-dwdata-binance.umd.js",
   "dependencies": {
     "axios": "^1.16.1",
-    "wsemi": "^1.8.76"
+    "wsemi": "^1.8.77"
   },
   "devDependencies": {
-    "w-package-tools": "^1.1.12"
+    "w-package-tools": "^1.1.13"
   },
   "scripts": {
     "test": "mocha --parallel --timeout 60000",
