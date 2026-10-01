@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#downloadData">downloadData</a></li><li><a href="global.html#saveData">saveData</a></li><li><a href="global.html#syncData">syncData</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#checkDataComplete">checkDataComplete</a></li><li><a href="global.html#downloadData">downloadData</a></li><li><a href="global.html#saveData">saveData</a></li><li><a href="global.html#syncData">syncData</a></li></ul>
     
 </nav>
 
@@ -58,10 +58,13 @@ import isestr from 'wsemi/src/isestr.mjs'
 import isbol from 'wsemi/src/isbol.mjs'
 import isday from 'wsemi/src/isday.mjs'
 import iseobj from 'wsemi/src/iseobj.mjs'
+import isp0int from 'wsemi/src/isp0int.mjs'
+import cint from 'wsemi/src/cint.mjs'
 import fsIsFile from 'wsemi/src/fsIsFile.mjs'
 import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
 import fsCreateFolder from 'wsemi/src/fsCreateFolder.mjs'
 import downloadData from './downloadData.mjs'
+import checkDataComplete from './checkDataComplete.mjs'
 
 
 ot.extend(utc)
@@ -70,7 +73,10 @@ ot.extend(timezone)
 
 /**
  * 根據指定的時間範圍與設定，自動抓取並儲存指定時長的幣種 K 線資料（Kline）。
- * 若該小時已存在資料檔，且完整，則跳過；否則會下載並儲存成 CSV 檔。
+ * 若該分段已存在資料檔，且完整，則跳過；否則會下載並儲存成 CSV 檔；最新分段每次必下載。
+ * 完整之定義見checkDataComplete：有內容、末列可解析、筆數等於分段應有筆數，且檔案修改時間不早於末列名目收棒時刻加寬限(opt.timeGrace)。
+ * 寫檔後會將檔案修改時間設為送出請求前之時刻，作為資料擷取時刻之保守下界；判定依賴檔案修改時間，複製資料時若未保留修改時間將無法偵測未收棒之末根，刪除該檔即可強制重抓。
+ * 處理順序為最新分段優先，其餘分段由新到舊；給予opt.timeBudget時，超過之舊分段留待下次呼叫，令長時間回補期間最新分段仍能更新。
  *
  * @async
  * @function saveData
@@ -81,12 +87,15 @@ ot.extend(timezone)
  * @param {String} interval - K 線間隔（如 '1m', '1h' 等）
  * @param {Object} [opt={}] - 可選設定參數
  * @param {String} [opt.dayStart='2020-01-01'] - 抓取起始時間（ISO 格式）
- * @param {String} [opt.timeZone='Asia/Taipei'] - 時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致，並透傳給 downloadData
+ * @param {String} [opt.timeZone='Asia/Taipei'] - 時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致，並透傳給 downloadData；僅支援無夏令時間之固定偏移時區，夏令時間切換日之分段會重複或缺漏；變更timeZone或dayStart時須改用新的fdData或刪除既有檔案
  * @param {String} [opt.fdData='./data'] - 儲存的根資料夾路徑
  * @param {Object} [opt.proxy] - axios proxy 設定（如 { protocol, host, port }）
- * @param {Boolean} [opt.useConvertToCsv=true] - 是否將資料轉為 CSV 格式儲存
+ * @param {Boolean} [opt.useConvertToCsv] - 已停用：一律以 CSV 格式儲存（舊版給予false時會導致不儲存任何檔案）
+ * @param {Integer} [opt.timeGrace=60000] - 名目收棒後之寬限毫秒數，幣安於名目收棒後仍可能短暫回傳非定稿值（實測現貨約1秒、溢價指數可達15秒），擷取時刻須不早於末根名目收棒加此值才視為定稿
+ * @param {Integer} [opt.timeBudget=0] - 每次呼叫處理舊分段之時間上限毫秒數，超過則剩餘舊分段留待下次呼叫，最新分段不受限，0代表不限
+ * @param {Boolean} [opt.useDryRun=false] - 是否只檢查不下載，true時不發請求亦不寫檔，回傳之items列出將被下載之分段與原因
  * @param {Boolean} [opt.useShowLog=false] - 是否顯示 log 資訊
- * @returns {Promise} 回傳Promise，resolve回傳成功訊息，reject回傳錯誤訊息
+ * @returns {Promise} 回傳Promise，resolve回傳物件 { timeKeep, timeLast, items }，timeLast與timeKeep為本次下載之最新分段末兩列之開始時間（乾跑或最新分段未成功下載時為undefined），items為本次下載（乾跑時為將下載）之分段陣列，各元素為 { tag, ts, te, reason }，reason為'latest'（最新分段）、'notExist'（檔案不存在）或checkDataComplete回傳之不完整原因；reject回傳錯誤訊息
  */
 
 let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
@@ -134,31 +143,37 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
     let kp = {
         '1m': {
             dataInterval: '1m',
+            dataSec: 60,
             hourInterval: 1,
             dataNum: 60,
         },
         '5m': {
             dataInterval: '5m',
+            dataSec: 5 * 60,
             hourInterval: 4,
             dataNum: 48,
         },
         '15m': {
             dataInterval: '15m',
+            dataSec: 15 * 60,
             hourInterval: 12,
             dataNum: 48,
         },
         '30m': {
             dataInterval: '30m',
+            dataSec: 30 * 60,
             hourInterval: 24, //1天放一個檔案
             dataNum: 48,
         },
         '1hr': {
             dataInterval: '1h',
+            dataSec: 60 * 60,
             hourInterval: 24 * 2, //2天放一個檔案
             dataNum: 48,
         },
         '4hr': {
             dataInterval: '4h',
+            dataSec: 4 * 60 * 60,
             hourInterval: 24 * 8, //8天放一個檔案
             dataNum: 48,
         },
@@ -172,6 +187,9 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
 
     //dataInterval, 每筆時間間隔
     let dataInterval = kp[interval].dataInterval
+
+    //dataSec, 每筆時長(秒), 供計算名目收棒時刻
+    let dataSec = kp[interval].dataSec
 
     //dataNum, 每次抓取數據筆數
     let dataNum = kp[interval].dataNum
@@ -200,10 +218,24 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
         proxy = {}
     }
 
-    //useConvertToCsv
-    let useConvertToCsv = get(opt, 'useConvertToCsv')
-    if (!isbol(useConvertToCsv)) {
-        useConvertToCsv = true
+    //timeGrace, 名目收棒後之寬限(毫秒)
+    let timeGrace = get(opt, 'timeGrace')
+    if (!isp0int(timeGrace)) {
+        timeGrace = 60 * 1000
+    }
+    timeGrace = cint(timeGrace)
+
+    //timeBudget, 每次呼叫處理舊分段之時間上限(毫秒), 0代表不限
+    let timeBudget = get(opt, 'timeBudget')
+    if (!isp0int(timeBudget)) {
+        timeBudget = 0
+    }
+    timeBudget = cint(timeBudget)
+
+    //useDryRun
+    let useDryRun = get(opt, 'useDryRun')
+    if (!isbol(useDryRun)) {
+        useDryRun = false
     }
 
     //useShowLog
@@ -262,22 +294,32 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
     }
     // console.log('rts', rts, size(rts))
 
-    //偵測既有檔案不抓, 若沒檔案就下載
+    //偵測既有檔案完整者不抓, 若沒檔案或不完整就下載
     let csFin = ''
+    let items = []
     if (true) {
+
+        //tRun, 本次處理起始時刻, 供timeBudget判斷
+        let tRun = Date.now()
 
         //up
         let up = size(rts) - 1
 
-        let k = -1
+        //k, rts最末為下一個時間點(k=up)為未來時間不須處理, 故自最新時間段(k=up-1)起往舊時間段處理, 令長時間回補期間最新時間段仍能先更新
+        let k = up
         while (true) {
-            k++
-            if (k >= up) { //最末為下一個時間點(k=up), 為未來時間, 不須處理直接跳出
+            k--
+            if (k &lt; 0) {
                 break
             }
 
             //bLast, 最新時間段預設一定要下載
             let bLast = k === up - 1
+
+            //check, 舊時間段之處理時間超過預算時留待下次呼叫, 最新時間段不受限
+            if (!bLast &amp;&amp; !useDryRun &amp;&amp; timeBudget > 0 &amp;&amp; Date.now() - tRun >= timeBudget) {
+                break
+            }
 
             //tag, ts
             let tag = get(rts, `${k}.tag`)
@@ -291,37 +333,56 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
             let fp = `${fd}/${tag}.csv`
             // console.log('fp', fp)
 
-            //ckComplete, 確認是否已下載
+            //ckComplete, 確認是否完整, 回傳不完整原因, 完整時回傳空字串
             let ckComplete = () => {
 
                 let c = fs.readFileSync(fp, 'utf8')
 
-                let s = sep(c, '\n')
+                //mtimeMs, 寫檔後已設為送出請求前之時刻, 為資料擷取時刻之保守下界
+                let mtimeMs = fs.statSync(fp).mtimeMs
 
-                let n = size(s)
-
-                let b = n !== dataNum //未有dataNum筆
-                // let b2 = false //各筆之結束時間未完整
-                // let b = b1 || b2
-                if (b) {
-                    console.log(`not complete: n[${n}]!==${dataNum}`, fp)
+                //筆數不符, 或末根擷取時刻未晚於名目收棒加寬限(例如於當前時長內中斷不下載更新, 筆數雖相同但最末數據不完全), 皆視為不完整
+                let r = checkDataComplete(c, {
+                    dataNum,
+                    dataSec,
+                    mtimeMs,
+                    timeGrace,
+                    timeZone,
+                })
+                if (!r.complete &amp;&amp; useShowLog) {
+                    console.log(`not complete: ${r.reason}`, fp)
                 }
 
-                //若於當前時長內中斷不下載更新, 此時檔案內最末數據會不完全, 待下個時長再下載時, 數據筆數會相同, 故無法反應此不完全問題, 因考慮效能故忽略不計
-
-                return b
+                return r.reason
             }
 
-            //check
-            let bNotExist = !fsIsFile(fp) //若指定時之檔案不存在就要下載
-            let bNotComplete = null //若指定時之檔案不完整就要下載
-            if (!bNotExist) {
+            //reason, 須下載之原因
+            let reason = ''
+            if (bLast) {
+                reason = 'latest' //最新時間段一定要下載
+            }
+            else if (!fsIsFile(fp)) {
+                reason = 'notExist' //若指定時之檔案不存在就要下載
+            }
+            else {
                 // console.log('ckComplete', fp)
-                bNotComplete = ckComplete()
-                // console.log('ckComplete', fp, bNotComplete)
+                reason = ckComplete() //若指定時之檔案不完整就要下載
+                // console.log('ckComplete', fp, reason)
             }
-            let b = bNotExist || bNotComplete || bLast
-            if (!b) {
+            if (reason === '') {
+                continue
+            }
+
+            //push
+            items.push({
+                tag,
+                ts,
+                te,
+                reason,
+            })
+
+            //check, 乾跑只檢查不下載
+            if (useDryRun) {
                 continue
             }
 
@@ -329,11 +390,14 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
                 console.log(`get ${name} ${type} [${ts}] -> [${te}] downloading...`)
             }
 
+            //tReq, 送出請求前之時刻, 寫檔後設為檔案修改時間
+            let tReq = Date.now()
+
             //cs
             let cs = await downloadData(endpoint, symbol, ts, te, dataInterval, {
                 timeZone,
                 proxy,
-                useConvertToCsv,
+                useConvertToCsv: true,
             })
 
             //check
@@ -350,11 +414,20 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
             }
             // console.log(tag, 'cs', cs)
 
-            //save
-            fs.writeFileSync(fp, cs, 'utf8')
+            //save, 寫檔後將檔案修改時間設為送出請求前之時刻, 單一時間段寫檔失敗不中斷其他時間段
+            try {
+                fs.writeFileSync(fp, cs, 'utf8')
+                fs.utimesSync(fp, new Date(), new Date(tReq))
+            }
+            catch (err) {
+                console.log(`can not save file`, fp, err)
+                continue
+            }
 
-            //update
-            csFin = cs
+            //update, 僅取最新時間段, 供計算timeLast與timeKeep
+            if (bLast) {
+                csFin = cs
+            }
 
         }
 
@@ -386,6 +459,7 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
     return {
         timeKeep,
         timeLast,
+        items,
     }
 }
 
@@ -405,7 +479,7 @@ export default saveData
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Tue Sep 22 2026 19:49:48 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Oct 01 2026 17:15:11 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>
