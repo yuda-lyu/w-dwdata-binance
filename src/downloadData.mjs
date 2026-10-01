@@ -4,8 +4,10 @@ import utc from 'dayjs/plugin/utc.js'
 import timezone from 'dayjs/plugin/timezone.js'
 import get from 'lodash-es/get.js'
 import map from 'lodash-es/map.js'
+import some from 'lodash-es/some.js'
 import size from 'lodash-es/size.js'
 import join from 'lodash-es/join.js'
+import isarr from 'wsemi/src/isarr.mjs'
 import iseobj from 'wsemi/src/iseobj.mjs'
 import isbol from 'wsemi/src/isbol.mjs'
 import isestr from 'wsemi/src/isestr.mjs'
@@ -18,6 +20,8 @@ ot.extend(timezone)
 
 /**
  * 下載指定時間區間內的 K 線數據(Kline)，並可選擇轉為 CSV 格式輸出。
+ * 某根K線若於擷取當下尚未收棒，其結束時間改為擷取時刻；此僅為提示，不保證其餘各根已定稿(幣安於名目收棒後仍可能短暫回傳非定稿值)，亦非判定未收棒之充要條件(幣安停機時段之歷史K線結束時間本即早於名目收棒)。
+ * 回應若非陣列(例如HTML頁面或錯誤物件)，或其中有非陣列之列，視為無數據。
  *
  * @async
  * @function downloadData
@@ -155,6 +159,12 @@ let downloadData = async (endpoint, symbol, timeStart, timeEnd, interval, opt = 
             // proxy,
         })
         let res = response.data
+
+        //check, 回應須為陣列且各列為陣列, 否則(例如HTML頁面或錯誤物件)視為無數據, 避免被逐字元或逐值轉成無效列而覆寫既有檔案
+        if (!isarr(res) || some(res, (v) => !isarr(v))) {
+            console.log(`invalid response for symbol[${symbol}]`)
+            res = []
+        }
 
         //url
         url = get(response, 'request.res.responseUrl', '')

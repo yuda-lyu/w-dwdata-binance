@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#downloadData">downloadData</a></li><li><a href="global.html#saveData">saveData</a></li><li><a href="global.html#syncData">syncData</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#checkDataComplete">checkDataComplete</a></li><li><a href="global.html#downloadData">downloadData</a></li><li><a href="global.html#saveData">saveData</a></li><li><a href="global.html#syncData">syncData</a></li></ul>
     
 </nav>
 
@@ -130,6 +130,463 @@
 
     
 
+    <h4 class="name" id="checkDataComplete"><span class="type-signature"></span>checkDataComplete<span class="signature">(c, opt<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Object}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>判斷分段檔內容是否完整，供saveData決定是否重抓。
+完整須同時滿足：有內容、末列可解析、筆數等於分段應有筆數、檔案修改時間不早於末列名目收棒時刻加寬限。
+末列名目收棒時刻為末列開始時間加每筆時長，不採用檔內結束時間欄，因幣安於停機時段之歷史K線結束時間本即早於名目收棒。
+檔案修改時間由saveData於寫檔後設為送出請求前之時刻，作為資料擷取時刻之保守下界；幣安於名目收棒後仍可能短暫回傳非定稿值，故須再加寬限。</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="checkDataComplete.mjs.html">checkDataComplete.mjs</a>, <a href="checkDataComplete.mjs.html#line26">line 26</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-examples">Example</h5>
+    
+    <pre class="prettyprint"><code>import checkDataComplete from './src/checkDataComplete.mjs'
+
+let c = [
+    '2026-09-30T16:00:00, 1, 2, 0.5, 1.5, 10, 2026-09-30T19:59:59, 15, 3, 5, 7',
+    '2026-09-30T20:00:00, 1.5, 3, 1, 2, 12, 2026-09-30T21:30:00, 20, 4, 6, 9',
+].join('\n')
+
+//末列開始時間2026-09-30T20:00:00(台北)加4小時, 名目收棒為2026-10-01T00:00:00(台北)
+let tClose = new Date('2026-10-01T00:00:00+08:00').getTime()
+
+console.log(checkDataComplete(c, { dataNum: 2, dataSec: 14400, mtimeMs: tClose - 1000 }))
+// => { complete: false, reason: 'beforeClose' }
+
+console.log(checkDataComplete(c, { dataNum: 2, dataSec: 14400, mtimeMs: tClose + 60000 }))
+// => { complete: true, reason: '' }
+
+console.log(checkDataComplete(c, { dataNum: 48, dataSec: 14400, mtimeMs: tClose + 60000 }))
+// => { complete: false, reason: 'count' }</code></pre>
+
+
+
+
+    <h5 class="h5-parameters">Parameters:</h5>
+    
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+        <th>Attributes</th>
+        
+
+        
+        <th>Default</th>
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>c</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>分段檔內容(CSV字串)</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>opt</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>{}</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>設定參數</p>
+                <h6>Properties</h6>
+                
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+        <th>Attributes</th>
+        
+
+        
+        <th>Default</th>
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>dataNum</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Integer</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>分段應有筆數</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>dataSec</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Integer</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>每筆時長(秒)</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>mtimeMs</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Number</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>檔案修改時間(毫秒)，未給時無法確認是否已收棒而回傳不完整</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>timeGrace</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Integer</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>60000</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>名目收棒後之寬限毫秒數</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>timeZone</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>'Asia/Taipei'</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>解析檔內時間字串所用之時區(IANA 時區名)</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+            </td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>回傳物件 { complete, reason }，complete為是否完整，reason為不完整原因：'empty'(無內容)、'invalidRow'(末列殘缺)、'count'(筆數不符)、'noMtime'(未給檔案修改時間)、'beforeClose'(擷取時刻未晚於名目收棒加寬限)，完整時為''</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Object</span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
+
+        
+            
+
+    
+
     <h4 class="name" id="downloadData"><span class="type-signature type-signature-async">(async) </span>downloadData<span class="signature">(endpoint, symbol, timeStart, timeEnd, interval, opt<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
 
     
@@ -140,13 +597,15 @@
 <dl class="details">
     
     <dt class="tag-description">Description:</dt>
-    <dd class="tag-description"><ul class="dummy"><li><p>下載指定時間區間內的 K 線數據(Kline)，並可選擇轉為 CSV 格式輸出。</p></li></ul></dd>
+    <dd class="tag-description"><ul class="dummy"><li><p>下載指定時間區間內的 K 線數據(Kline)，並可選擇轉為 CSV 格式輸出。
+某根K線若於擷取當下尚未收棒，其結束時間改為擷取時刻；此僅為提示，不保證其餘各根已定稿(幣安於名目收棒後仍可能短暫回傳非定稿值)，亦非判定未收棒之充要條件(幣安停機時段之歷史K線結束時間本即早於名目收棒)。
+回應若非陣列(例如HTML頁面或錯誤物件)，或其中有非陣列之列，視為無數據。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="downloadData.mjs.html">downloadData.mjs</a>, <a href="downloadData.mjs.html#line19">line 19</a>
+        <a href="downloadData.mjs.html">downloadData.mjs</a>, <a href="downloadData.mjs.html#line21">line 21</a>
     </li></ul></dd>
     
 
@@ -652,13 +1111,16 @@
     
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>根據指定的時間範圍與設定，自動抓取並儲存指定時長的幣種 K 線資料（Kline）。
-若該小時已存在資料檔，且完整，則跳過；否則會下載並儲存成 CSV 檔。</p></li></ul></dd>
+若該分段已存在資料檔，且完整，則跳過；否則會下載並儲存成 CSV 檔；最新分段每次必下載。
+完整之定義見checkDataComplete：有內容、末列可解析、筆數等於分段應有筆數，且檔案修改時間不早於末列名目收棒時刻加寬限(opt.timeGrace)。
+寫檔後會將檔案修改時間設為送出請求前之時刻，作為資料擷取時刻之保守下界；判定依賴檔案修改時間，複製資料時若未保留修改時間將無法偵測未收棒之末根，刪除該檔即可強制重抓。
+處理順序為最新分段優先，其餘分段由新到舊；給予opt.timeBudget時，超過之舊分段留待下次呼叫，令長時間回補期間最新分段仍能更新。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="saveData.mjs.html">saveData.mjs</a>, <a href="saveData.mjs.html#line24">line 24</a>
+        <a href="saveData.mjs.html">saveData.mjs</a>, <a href="saveData.mjs.html#line27">line 27</a>
     </li></ul></dd>
     
 
@@ -1050,7 +1512,7 @@
                 </td>
             
 
-            <td class="description last"><p>時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致，並透傳給 downloadData</p></td>
+            <td class="description last"><p>時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致，並透傳給 downloadData；僅支援無夏令時間之固定偏移時區，夏令時間切換日之分段會重複或缺漏；變更timeZone或dayStart時須改用新的fdData或刪除既有檔案</p></td>
         </tr>
 
     
@@ -1163,12 +1625,130 @@
             
                 <td class="default">
                 
-                    <code>true</code>
+                </td>
+            
+
+            <td class="description last"><p>已停用：一律以 CSV 格式儲存（舊版給予false時會導致不儲存任何檔案）</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>timeGrace</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Integer</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
                 
                 </td>
             
 
-            <td class="description last"><p>是否將資料轉為 CSV 格式儲存</p></td>
+            
+                <td class="default">
+                
+                    <code>60000</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>名目收棒後之寬限毫秒數，幣安於名目收棒後仍可能短暫回傳非定稿值（實測現貨約1秒、溢價指數可達15秒），擷取時刻須不早於末根名目收棒加此值才視為定稿</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>timeBudget</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Integer</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>0</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>每次呼叫處理舊分段之時間上限毫秒數，超過則剩餘舊分段留待下次呼叫，最新分段不受限，0代表不限</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>useDryRun</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Boolean</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>false</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>是否只檢查不下載，true時不發請求亦不寫檔，回傳之items列出將被下載之分段與原因</p></td>
         </tr>
 
     
@@ -1241,7 +1821,7 @@
 
         
 <div class="param-desc">
-    <p>回傳Promise，resolve回傳成功訊息，reject回傳錯誤訊息</p>
+    <p>回傳Promise，resolve回傳物件 { timeKeep, timeLast, items }，timeLast與timeKeep為本次下載之最新分段末兩列之開始時間（乾跑或最新分段未成功下載時為undefined），items為本次下載（乾跑時為將下載）之分段陣列，各元素為 { tag, ts, te, reason }，reason為'latest'（最新分段）、'notExist'（檔案不存在）或checkDataComplete回傳之不完整原因；reject回傳錯誤訊息</p>
 </div>
 
 
@@ -1279,13 +1859,14 @@
     
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>建立一個定時同步資料的任務，定期呼叫 saveData 以抓取與儲存幣種 K 線資料。
-可啟動與停止，適合作為長時間後台資料同步機制。</p></li></ul></dd>
+可啟動與停止，適合作為長時間後台資料同步機制。
+每輪呼叫 saveData 時以同步間隔之80%作為處理舊分段之時間上限(saveData之opt.timeBudget)，最新分段每輪必抓，長時間回補期間最新分段仍能持續更新。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="syncData.mjs.html">syncData.mjs</a>, <a href="syncData.mjs.html#line18">line 18</a>
+        <a href="syncData.mjs.html">syncData.mjs</a>, <a href="syncData.mjs.html#line19">line 19</a>
     </li></ul></dd>
     
 
@@ -1681,7 +2262,7 @@
                 </td>
             
 
-            <td class="description last"><p>時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致，並透傳給 saveData</p></td>
+            <td class="description last"><p>時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致，並透傳給 saveData；僅支援無夏令時間之固定偏移時區，變更timeZone或dayStart時須改用新的fdData或刪除既有檔案</p></td>
         </tr>
 
     
@@ -1794,12 +2375,50 @@
             
                 <td class="default">
                 
-                    <code>true</code>
+                </td>
+            
+
+            <td class="description last"><p>已停用：一律以 CSV 格式儲存（舊版給予false時會導致不儲存任何檔案）</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>timeGrace</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">number</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
                 
                 </td>
             
 
-            <td class="description last"><p>是否轉換成 CSV 字串並儲存</p></td>
+            
+                <td class="default">
+                
+                    <code>60000</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>名目收棒後之寬限毫秒數，透傳給 saveData，擷取時刻須不早於末根名目收棒加此值才視為定稿</p></td>
         </tr>
 
     
@@ -1996,7 +2615,7 @@
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Tue Sep 22 2026 19:49:48 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Oct 01 2026 17:15:11 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

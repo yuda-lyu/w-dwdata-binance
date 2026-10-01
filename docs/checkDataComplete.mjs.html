@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    
+    <meta charset="utf-8">
+    <title>checkDataComplete.mjs - Documentation</title>
+    
+    
+    <script src="scripts/prettify/prettify.js"></script>
+    <script src="scripts/prettify/lang-css.js"></script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc.css">
+    <script src="scripts/nav.js" defer></script>
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+
+<input type="checkbox" id="nav-trigger" class="nav-trigger" />
+<label for="nav-trigger" class="navicon-button x">
+  <div class="navicon"></div>
+</label>
+
+<label for="nav-trigger" class="overlay"></label>
+
+<nav >
+    
+    
+    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#checkDataComplete">checkDataComplete</a></li><li><a href="global.html#downloadData">downloadData</a></li><li><a href="global.html#saveData">saveData</a></li><li><a href="global.html#syncData">syncData</a></li></ul>
+    
+</nav>
+
+<div id="main">
+    
+    <h1 class="page-title">checkDataComplete.mjs</h1>
+    
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>import ot from 'dayjs'
+import utc from 'dayjs/plugin/utc.js'
+import timezone from 'dayjs/plugin/timezone.js'
+import get from 'lodash-es/get.js'
+import map from 'lodash-es/map.js'
+import size from 'lodash-es/size.js'
+import split from 'lodash-es/split.js'
+import trim from 'lodash-es/trim.js'
+import sep from 'wsemi/src/sep.mjs'
+import isnum from 'wsemi/src/isnum.mjs'
+import ispint from 'wsemi/src/ispint.mjs'
+import isp0int from 'wsemi/src/isp0int.mjs'
+import isestr from 'wsemi/src/isestr.mjs'
+import cint from 'wsemi/src/cint.mjs'
+import cdbl from 'wsemi/src/cdbl.mjs'
+
+
+ot.extend(utc)
+ot.extend(timezone)
+
+
+//reTime, downloadData輸出之開始與結束時間格式
+let reTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/
+
+
+/**
+ * 判斷分段檔內容是否完整，供saveData決定是否重抓。
+ * 完整須同時滿足：有內容、末列可解析、筆數等於分段應有筆數、檔案修改時間不早於末列名目收棒時刻加寬限。
+ * 末列名目收棒時刻為末列開始時間加每筆時長，不採用檔內結束時間欄，因幣安於停機時段之歷史K線結束時間本即早於名目收棒。
+ * 檔案修改時間由saveData於寫檔後設為送出請求前之時刻，作為資料擷取時刻之保守下界；幣安於名目收棒後仍可能短暫回傳非定稿值，故須再加寬限。
+ *
+ * @function checkDataComplete
+ * @param {String} c - 分段檔內容(CSV字串)
+ * @param {Object} [opt={}] - 設定參數
+ * @param {Integer} opt.dataNum - 分段應有筆數
+ * @param {Integer} opt.dataSec - 每筆時長(秒)
+ * @param {Number} opt.mtimeMs - 檔案修改時間(毫秒)，未給時無法確認是否已收棒而回傳不完整
+ * @param {Integer} [opt.timeGrace=60000] - 名目收棒後之寬限毫秒數
+ * @param {String} [opt.timeZone='Asia/Taipei'] - 解析檔內時間字串所用之時區(IANA 時區名)
+ * @returns {Object} 回傳物件 { complete, reason }，complete為是否完整，reason為不完整原因：'empty'(無內容)、'invalidRow'(末列殘缺)、'count'(筆數不符)、'noMtime'(未給檔案修改時間)、'beforeClose'(擷取時刻未晚於名目收棒加寬限)，完整時為''
+ * @example
+ *
+ * import checkDataComplete from './src/checkDataComplete.mjs'
+ *
+ * let c = [
+ *     '2026-09-30T16:00:00, 1, 2, 0.5, 1.5, 10, 2026-09-30T19:59:59, 15, 3, 5, 7',
+ *     '2026-09-30T20:00:00, 1.5, 3, 1, 2, 12, 2026-09-30T21:30:00, 20, 4, 6, 9',
+ * ].join('\n')
+ *
+ * //末列開始時間2026-09-30T20:00:00(台北)加4小時, 名目收棒為2026-10-01T00:00:00(台北)
+ * let tClose = new Date('2026-10-01T00:00:00+08:00').getTime()
+ *
+ * console.log(checkDataComplete(c, { dataNum: 2, dataSec: 14400, mtimeMs: tClose - 1000 }))
+ * // => { complete: false, reason: 'beforeClose' }
+ *
+ * console.log(checkDataComplete(c, { dataNum: 2, dataSec: 14400, mtimeMs: tClose + 60000 }))
+ * // => { complete: true, reason: '' }
+ *
+ * console.log(checkDataComplete(c, { dataNum: 48, dataSec: 14400, mtimeMs: tClose + 60000 }))
+ * // => { complete: false, reason: 'count' }
+ *
+ */
+let checkDataComplete = (c, opt = {}) => {
+
+    //dataNum
+    let dataNum = get(opt, 'dataNum')
+    if (!ispint(dataNum)) {
+        throw new Error('invalid opt.dataNum')
+    }
+    dataNum = cint(dataNum)
+
+    //dataSec
+    let dataSec = get(opt, 'dataSec')
+    if (!ispint(dataSec)) {
+        throw new Error('invalid opt.dataSec')
+    }
+    dataSec = cint(dataSec)
+
+    //mtimeMs
+    let mtimeMs = get(opt, 'mtimeMs')
+
+    //timeGrace
+    let timeGrace = get(opt, 'timeGrace')
+    if (!isp0int(timeGrace)) {
+        timeGrace = 60 * 1000
+    }
+    timeGrace = cint(timeGrace)
+
+    //timeZone
+    let timeZone = get(opt, 'timeZone')
+    if (!isestr(timeZone)) {
+        timeZone = 'Asia/Taipei'
+    }
+
+    //s, 各列
+    let s = sep(c, '\n')
+
+    //n
+    let n = size(s)
+
+    //check, 無內容
+    if (n === 0) {
+        return {
+            complete: false,
+            reason: 'empty',
+        }
+    }
+
+    //cols, 末列各欄, 以split切割保留空欄位置, 不用sep以免空欄被剔除造成欄位位移
+    let cols = map(split(get(s, n - 1), ','), trim)
+
+    //timeStart, timeEnd
+    let timeStart = get(cols, 0, '')
+    let timeEnd = get(cols, 6, '')
+
+    //check, 末列殘缺, 例如寫檔中斷
+    if (size(cols) &lt; 7 || !reTime.test(timeStart) || !reTime.test(timeEnd)) {
+        return {
+            complete: false,
+            reason: 'invalidRow',
+        }
+    }
+
+    //check, 筆數
+    if (n !== dataNum) {
+        return {
+            complete: false,
+            reason: 'count',
+        }
+    }
+
+    //check, 無檔案修改時間則無法確認是否已收棒
+    if (!isnum(mtimeMs)) {
+        return {
+            complete: false,
+            reason: 'noMtime',
+        }
+    }
+    mtimeMs = cdbl(mtimeMs)
+
+    //tClose, 末列名目收棒時刻
+    let tClose = ot.tz(timeStart, timeZone).valueOf() + dataSec * 1000
+
+    //check, 擷取時刻須不早於名目收棒加寬限
+    if (mtimeMs &lt; tClose + timeGrace) {
+        return {
+            complete: false,
+            reason: 'beforeClose',
+        }
+    }
+
+    return {
+        complete: true,
+        reason: '',
+    }
+}
+
+
+export default checkDataComplete
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+    
+    
+</div>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Oct 01 2026 17:15:11 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+</footer>
+
+<script>prettyPrint();</script>
+<script src="scripts/polyfill.js"></script>
+<script src="scripts/linenumber.js"></script>
+
+
+
+</body>
+</html>
