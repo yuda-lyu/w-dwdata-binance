@@ -10,6 +10,7 @@ import iseobj from 'wsemi/src/iseobj.mjs'
 import isp0int from 'wsemi/src/isp0int.mjs'
 import cint from 'wsemi/src/cint.mjs'
 import saveData from './saveData.mjs'
+import { getIntervalPlan } from './intervals.mjs'
 
 
 ot.extend(utc)
@@ -28,8 +29,9 @@ ot.extend(timezone)
  * @param {string} symbol - 幣種交易對（如 'BTCUSDT'）
  * @param {Object} [opt={}] - 可選設定參數
  * @param {String} [opt.dayStart='2020-01-01'] - 抓取起始時間（ISO 格式）
- * @param {string} [opt.interval='1m'] - K 線時間間隔（如 '1m', '5m', '1h'）
- * @param {String} [opt.timeZone='Asia/Taipei'] - 時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致，並透傳給 saveData；僅支援無夏令時間之固定偏移時區，變更timeZone或dayStart時須改用新的fdData或刪除既有檔案
+ * @param {string} [opt.interval='1m'] - K 線週期鍵（如 '1m', '5m', '1hr', '4hr', '1day'），透傳給 saveData，全部週期鍵與取得方式(直接下載或依時區合併)見 saveData
+ * @param {string} [opt.aggregateFrom='auto'] - 取得方式('auto'、'none'或基底週期鍵)，透傳給 saveData，見 saveData；週期鍵、取得方式與時區於建立時即以 getIntervalPlan 檢查，無效即拋(未啟動計時器)
+ * @param {String} [opt.timeZone='Asia/Taipei'] - 時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致，並透傳給 saveData；須合併者須為無夏令時間之固定偏移時區，直接下載者於夏令時間切換日之分段會重複或缺漏；變更timeZone或dayStart時直接下載者須改用新的fdData或刪除既有檔案(合併者之資料夾名含偏移與dayStart，不共用)，詳見 saveData
  * @param {string} [opt.fdData='./data'] - 資料儲存的根資料夾
  * @param {Object} [opt.proxy] - proxy 設定，用於 axios，例如 { protocol, host, port }
  * @param {boolean} [opt.useConvertToCsv] - 已停用：一律以 CSV 格式儲存（舊版給予false時會導致不儲存任何檔案）
@@ -123,6 +125,12 @@ let syncData = (name, type, endpoint, symbol, opt = {}) => {
         useShowLog = false
     }
 
+    //aggregateFrom, 透傳給saveData(undefined與null視為未給, 由getIntervalPlan處理)
+    let aggregateFrom = get(opt, 'aggregateFrom')
+
+    //check, 建立時即檢查週期鍵、取得方式與時區(無效即拋, 先於啟動任何計時器), 免得每輪皆於saveData失敗而只印錯誤
+    getIntervalPlan(interval, { aggregateFrom, timeZone, dayStart })
+
     let t = null
     let b = false
     let core = () => {
@@ -141,6 +149,7 @@ let syncData = (name, type, endpoint, symbol, opt = {}) => {
             fdData,
             proxy,
             useShowLog,
+            aggregateFrom,
         })
             .then((res) => {
                 // console.log('res', res)

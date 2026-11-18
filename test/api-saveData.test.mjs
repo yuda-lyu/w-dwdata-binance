@@ -168,10 +168,17 @@ describe('api-saveData', function() {
     after(async function() {
         await new Promise((resolve) => server.close(resolve))
         fs.rmSync(fdRoot, { recursive: true, force: true })
-        //test/_tmp 已無其他測試之暫存時一併移除
+        //test/_tmp 已無其他測試之暫存時一併移除(並行之測試可能同時建立或移除, 不拋)
         let fdTmp = path.dirname(path.resolve(fdRoot))
-        if (fs.existsSync(fdTmp) && fs.readdirSync(fdTmp).length === 0) {
-            fs.rmdirSync(fdTmp)
+        try {
+            if (fs.existsSync(fdTmp) && fs.readdirSync(fdTmp).length === 0) {
+                fs.rmdirSync(fdTmp)
+            }
+        }
+        catch (err) {
+            if (err.code !== 'ENOTEMPTY' && err.code !== 'ENOENT') {
+                throw err
+            }
         }
     })
 

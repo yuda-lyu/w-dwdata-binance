@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    
+    <meta charset="utf-8">
+    <title>aggregateData.mjs - Documentation</title>
+    
+    
+    <script src="scripts/prettify/prettify.js"></script>
+    <script src="scripts/prettify/lang-css.js"></script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc.css">
+    <script src="scripts/nav.js" defer></script>
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+
+<input type="checkbox" id="nav-trigger" class="nav-trigger" />
+<label for="nav-trigger" class="navicon-button x">
+  <div class="navicon"></div>
+</label>
+
+<label for="nav-trigger" class="overlay"></label>
+
+<nav >
+    
+    
+    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#aggregateData">aggregateData</a></li><li><a href="global.html#checkDataComplete">checkDataComplete</a></li><li><a href="global.html#downloadData">downloadData</a></li><li><a href="global.html#getIntervalPlan">getIntervalPlan</a></li><li><a href="global.html#getIntervals">getIntervals</a></li><li><a href="global.html#getOffsets">getOffsets</a></li><li><a href="global.html#saveData">saveData</a></li><li><a href="global.html#syncData">syncData</a></li></ul>
+    
+</nav>
+
+<div id="main">
+    
+    <h1 class="page-title">aggregateData.mjs</h1>
+    
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>import fs from 'fs'
+import ot from 'dayjs'
+import utc from 'dayjs/plugin/utc.js'
+import timezone from 'dayjs/plugin/timezone.js'
+import get from 'lodash-es/get.js'
+import map from 'lodash-es/map.js'
+import split from 'lodash-es/split.js'
+import trim from 'lodash-es/trim.js'
+import join from 'lodash-es/join.js'
+import sep from 'wsemi/src/sep.mjs'
+import fsIsFile from 'wsemi/src/fsIsFile.mjs'
+import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
+import fsCreateFolder from 'wsemi/src/fsCreateFolder.mjs'
+import { getIntervals, ANCHOR_SEC } from './intervals.mjs'
+
+
+ot.extend(utc)
+ot.extend(timezone)
+
+
+let H = 3600 * 1000
+
+let mod = (x, m) => ((x % m) + m) % m
+
+//reDec, 十進位數字字串
+let reDec = /^-?\d+(\.\d+)?$/
+
+//parseDec, 十進位字串轉為整數與小數位數(精確, 不經浮點)
+let parseDec = (s) => {
+    let neg = s[0] === '-'
+    let t = neg ? s.slice(1) : s
+    let [a, b = ''] = t.split('.')
+    let v = BigInt(`${a}${b}`)
+    return { v: neg ? -v : v, scale: b.length }
+}
+
+let toScale = (d, scale) => d.v * (10n ** BigInt(scale - d.scale))
+
+//decSum, 十進位字串加總, 小數位數取各值之最大者
+let decSum = (ss) => {
+    let ds = map(ss, parseDec)
+    let scale = Math.max(...map(ds, 'scale'))
+    let v = 0n
+    for (let d of ds) {
+        v += toScale(d, scale)
+    }
+    let neg = v &lt; 0n
+    if (neg) {
+        v = -v
+    }
+    let s = v.toString()
+    if (scale > 0) {
+        s = s.padStart(scale + 1, '0')
+        s = `${s.slice(0, s.length - scale)}.${s.slice(s.length - scale)}`
+    }
+    return `${neg ? '-' : ''}${s}`
+}
+
+//decCmp, 十進位字串比較
+let decCmp = (a, b) => {
+    let da = parseDec(a)
+    let db = parseDec(b)
+    let scale = Math.max(da.scale, db.scale)
+    let x = toScale(da, scale)
+    let y = toScale(db, scale)
+    return x &lt; y ? -1 : (x > y ? 1 : 0)
+}
+
+//COLS_NUM, 數值欄之位置(開高低收、量、成交額、筆數、主動買入量與額)
+let COLS_NUM = [1, 2, 3, 4, 5, 7, 8, 9, 10]
+
+//mergeRows, 合併基底各根: 開=首根之開、高=最高、低=最低、收=末根之收, 量、成交額、筆數、主動買入量與額=加總, 開始時間=首根之開始時間, 結束時間=末根之結束時間
+let mergeRows = (rows) => {
+    let first = rows[0]
+    let last = rows[rows.length - 1]
+    let hi = first[2]
+    let lo = first[3]
+    for (let r of rows) {
+        if (decCmp(r[2], hi) > 0) {
+            hi = r[2]
+        }
+        if (decCmp(r[3], lo) &lt; 0) {
+            lo = r[3]
+        }
+    }
+    let sumOf = (i) => decSum(map(rows, (r) => r[i]))
+    return [
+        first[0],
+        first[1],
+        hi,
+        lo,
+        last[4],
+        sumOf(5),
+        last[6],
+        sumOf(7),
+        sumOf(8),
+        sumOf(9),
+        sumOf(10),
+    ]
+}
+
+
+/**
+ * 將基底週期之分段檔合併為目標週期之分段檔，各根以timeZone(固定偏移)之界線起訖，供saveData於合併時使用。
+ * 目標之分段同目標週期鍵之分段(自dayStart 00:00起每段hourInterval小時)；分段檔不存在、根數少於該段應有根數、為最新分段、或所需之基底分段檔之修改時間晚於該分段檔者重算，其餘沿用(以外部方式改動基底分段檔而未令其修改時間晚於合併分段檔者不會重算，刪除該合併分段檔即可強制重算)。
+ * 某目標根之基底各根須齊全且皆已定稿(基底所在分段檔之修改時間不早於該基底根之名目收棒加寬限)，否則不輸出該根並記入missing：reason為'open'(目標根尚未收棒加寬限)、'gap'(基底根缺漏)、'invalidBase'(基底根之數值欄無法解析)或'notFinal'(基底根擷取於其收棒前)；早於最早一根基底資料之目標根不列入。
+ *
+ * @function aggregateData
+ * @param {Object} opt - 設定參數
+ * @param {String} opt.fdBase - 基底週期之分段檔資料夾
+ * @param {String} opt.fdAgg - 合併序列之分段檔資料夾
+ * @param {Object} opt.plan - getIntervalPlan之回傳(mode須為'aggregate')
+ * @param {String} opt.timeZone - 時區
+ * @param {String} opt.dayStart - 抓取起始日
+ * @param {Integer} opt.timeGrace - 名目收棒後之寬限毫秒數
+ * @param {Boolean} [opt.useShowLog=false] - 是否顯示log
+ * @returns {Object} 回傳物件 { segments, missing, timeLast, timeKeep }，segments為本次重算之分段 [{ tag, n }]，missing為未輸出之目標根 [{ time, have, need, reason }]，timeLast與timeKeep為最新兩根已輸出目標根之開始時間(無則undefined)
+ */
+let aggregateData = (opt) => {
+    let { fdBase, fdAgg, plan, timeZone, dayStart, timeGrace } = opt
+    let useShowLog = get(opt, 'useShowLog') === true
+
+    let kp = getIntervals()
+    let kT = kp[plan.interval]
+    let kB = kp[plan.base]
+    let t = plan.dataSec * 1000
+    let b = kB.dataSec * 1000
+    let LT = kT.hourInterval * H
+    let LB = kB.hourInterval * H
+    let count = plan.count
+
+    //phase, 目標之各根起點(timeZone之界線)於UTC之相位
+    let phase = get(ANCHOR_SEC, plan.interval, 0) * 1000 - plan.utcOffset * 60 * 1000
+
+    let fmt = (ms) => ot.tz(ms, timeZone).format('YYYY-MM-DDTHH:mm:ss')
+    let tagOf = (ms) => ot.tz(ms, timeZone).format('YYYYMMDDHHmmss')
+    let parseTime = (s) => ot.tz(s, timeZone).valueOf()
+
+    let t0 = parseTime(`${dayStart}T00:00:00`)
+    let now = Date.now()
+    let kLatest = Math.floor((now - t0) / LT)
+
+    if (!fsIsFolder(fdAgg)) {
+        fsCreateFolder(fdAgg)
+    }
+
+    //base, 基底分段檔之快取: j -> { exists, mtimeMs, rows(Map: 開盤ms -> 各欄) }
+    let cache = new Map()
+    let fpBase = (j) => `${fdBase}/${tagOf(t0 + j * LB)}.csv`
+    let statBase = (j) => {
+        let fp = fpBase(j)
+        if (!fsIsFile(fp)) {
+            return null
+        }
+        return fs.statSync(fp).mtimeMs
+    }
+    let loadBase = (j) => {
+        if (cache.has(j)) {
+            return cache.get(j)
+        }
+        let r = { exists: false, mtimeMs: 0, rows: new Map() }
+        let fp = fpBase(j)
+        if (fsIsFile(fp)) {
+            r.exists = true
+            r.mtimeMs = fs.statSync(fp).mtimeMs
+            for (let line of sep(fs.readFileSync(fp, 'utf8'), '\n')) {
+                let cols = map(split(line, ','), trim)
+                if (cols.length >= 11) {
+                    r.rows.set(parseTime(cols[0]), cols)
+                }
+            }
+        }
+        cache.set(j, r)
+        return r
+    }
+    let jOf = (ms) => Math.floor((ms - t0) / LB)
+
+    //readAgg, 讀既有之合併分段檔各列
+    let readAgg = (fp) => {
+        if (!fsIsFile(fp)) {
+            return []
+        }
+        return sep(fs.readFileSync(fp, 'utf8'), '\n')
+    }
+
+    let segments = []
+    let missing = []
+    let outBy = {} //k -> 各列(最新兩段, 供timeLast與timeKeep)
+    let seen = false //是否已遇到基底資料, 早於最早一根基底資料之目標根不列入missing
+
+    for (let k = 0; k &lt;= kLatest; k++) {
+
+        let S = t0 + k * LT
+        let E = S + LT
+
+        //opens, 本段之目標根起點
+        let first = S + mod(phase - S, t)
+        let opens = []
+        for (let o = first; o &lt; E; o += t) {
+            opens.push(o)
+        }
+        let tag = tagOf(S)
+        let fpAgg = `${fdAgg}/${tag}.csv`
+
+        //是否重算
+        let redo = k === kLatest || !fsIsFile(fpAgg)
+        let rowsOld = null
+        if (!redo) {
+            rowsOld = readAgg(fpAgg)
+            if (rowsOld.length &lt; opens.length) {
+                redo = true
+            }
+        }
+        if (!redo) {
+            let mtAgg = fs.statSync(fpAgg).mtimeMs
+            let jFrom = jOf(opens[0])
+            let jTo = jOf(opens[opens.length - 1] + t - 1)
+            for (let j = jFrom; j &lt;= jTo; j++) {
+                let m = statBase(j)
+                if (m !== null &amp;&amp; m > mtAgg) {
+                    redo = true
+                    break
+                }
+            }
+        }
+        if (!redo) {
+            seen = true
+            if (k >= kLatest - 1) {
+                outBy[k] = rowsOld
+            }
+            continue
+        }
+
+        //合併
+        let rows = []
+        for (let o of opens) {
+            if (o > now) {
+                break
+            }
+            let bs = []
+            let final = true
+            let valid = true
+            for (let i = 0; i &lt; count; i++) {
+                let ob = o + i * b
+                let fb = loadBase(jOf(ob))
+                let r = fb.rows.get(ob)
+                if (!r) {
+                    continue
+                }
+                bs.push(r)
+                if (fb.mtimeMs &lt; ob + b + timeGrace) {
+                    final = false
+                }
+                for (let c of COLS_NUM) {
+                    if (!reDec.test(r[c])) {
+                        valid = false
+                    }
+                }
+            }
+            if (bs.length > 0) {
+                seen = true
+            }
+            if (bs.length === count &amp;&amp; final &amp;&amp; valid) {
+                rows.push(join(mergeRows(bs), ', '))
+                continue
+            }
+            if (!seen) {
+                continue
+            }
+            let reason = ''
+            if (o + t + timeGrace > now) {
+                reason = 'open'
+            }
+            else if (bs.length &lt; count) {
+                reason = 'gap'
+            }
+            else if (!valid) {
+                reason = 'invalidBase'
+            }
+            else {
+                reason = 'notFinal'
+            }
+            missing.push({
+                time: fmt(o),
+                have: bs.length,
+                need: count,
+                reason,
+            })
+        }
+
+        if (rows.length > 0) {
+            //寫檔後修改時間設為現在之時刻(與基底分段檔之修改時間同一時鐘), 供下次判定基底是否較新
+            fs.writeFileSync(fpAgg, join(rows, '\n'), 'utf8')
+            fs.utimesSync(fpAgg, new Date(), new Date(Date.now()))
+            segments.push({ tag, n: rows.length })
+            if (useShowLog) {
+                console.log(`aggregate [${tag}] ${rows.length} rows from ${plan.base} x${count}`)
+            }
+        }
+        if (k >= kLatest - 1) {
+            outBy[k] = rows.length > 0 ? rows : readAgg(fpAgg)
+        }
+    }
+
+    //timeLast, timeKeep, 最新兩根已輸出目標根之開始時間
+    let tail = [...get(outBy, kLatest - 1, []), ...get(outBy, kLatest, [])]
+    let gt = (l) => (l === undefined ? undefined : trim(split(l, ',')[0]))
+    let timeLast = gt(tail[tail.length - 1])
+    let timeKeep = gt(tail[tail.length - 2])
+
+    return {
+        segments,
+        missing,
+        timeLast,
+        timeKeep,
+    }
+}
+
+
+export default aggregateData
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+    
+    
+</div>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Nov 19 2026 06:26:04 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+</footer>
+
+<script>prettyPrint();</script>
+<script src="scripts/polyfill.js"></script>
+<script src="scripts/linenumber.js"></script>
+
+
+
+</body>
+</html>

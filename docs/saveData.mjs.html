@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#checkDataComplete">checkDataComplete</a></li><li><a href="global.html#downloadData">downloadData</a></li><li><a href="global.html#saveData">saveData</a></li><li><a href="global.html#syncData">syncData</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#aggregateData">aggregateData</a></li><li><a href="global.html#checkDataComplete">checkDataComplete</a></li><li><a href="global.html#downloadData">downloadData</a></li><li><a href="global.html#getIntervalPlan">getIntervalPlan</a></li><li><a href="global.html#getIntervals">getIntervals</a></li><li><a href="global.html#getOffsets">getOffsets</a></li><li><a href="global.html#saveData">saveData</a></li><li><a href="global.html#syncData">syncData</a></li></ul>
     
 </nav>
 
@@ -53,7 +53,6 @@ import timezone from 'dayjs/plugin/timezone.js'
 import get from 'lodash-es/get.js'
 import size from 'lodash-es/size.js'
 import sep from 'wsemi/src/sep.mjs'
-import haskey from 'wsemi/src/haskey.mjs'
 import isestr from 'wsemi/src/isestr.mjs'
 import isbol from 'wsemi/src/isbol.mjs'
 import isday from 'wsemi/src/isday.mjs'
@@ -65,6 +64,8 @@ import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
 import fsCreateFolder from 'wsemi/src/fsCreateFolder.mjs'
 import downloadData from './downloadData.mjs'
 import checkDataComplete from './checkDataComplete.mjs'
+import aggregateData from './aggregateData.mjs'
+import { getIntervals, getIntervalPlan } from './intervals.mjs'
 
 
 ot.extend(utc)
@@ -77,6 +78,15 @@ ot.extend(timezone)
  * 完整之定義見checkDataComplete：有內容、末列可解析、筆數等於分段應有筆數，且檔案修改時間不早於末列名目收棒時刻加寬限(opt.timeGrace)。
  * 寫檔後會將檔案修改時間設為送出請求前之時刻，作為資料擷取時刻之保守下界；判定依賴檔案修改時間，複製資料時若未保留修改時間將無法偵測未收棒之末根，刪除該檔即可強制重抓。
  * 處理順序為最新分段優先，其餘分段由新到舊；給予opt.timeBudget時，超過之舊分段留待下次呼叫，令長時間回補期間最新分段仍能更新。
+ * 週期鍵(interval)與送交易所之週期、每段時長、每段筆數：'1m'(1m, 1小時, 60筆)、'3m'(3m, 3小時, 60筆)、'5m'(5m, 4小時, 48筆)、'15m'(15m, 12小時, 48筆)、'30m'(30m, 1天, 48筆)、'1hr'(1h, 2天, 48筆)、'2hr'(2h, 4天, 48筆)、'4hr'(4h, 8天, 48筆)、'6hr'(6h, 12天, 48筆)、'8hr'(8h, 16天, 48筆)、'12hr'(12h, 24天, 48筆)、'1day'(1d, 48天, 48筆)、'1week'(1w, 48週, 48筆)；每段時長皆為每根時長之整數倍。交易所之3d(現貨與合約溢價指數之開盤對齊不同)、1M(每根長度不固定)、1s(合約不支援)不支援。
+ * 取得方式(見intervals.mjs之getIntervalPlan)：交易所原生之格線以UTC為錨(1day為UTC 00:00，1week為週一UTC 00:00，日內週期為UTC epoch之整數倍)，本函數不送交易所之timeZone參數(合約端點不支援)。
+ * (1)直接下載原生週期：各根以交易所之UTC格線起訖，存於'&lt;週期鍵>'資料夾。opt.aggregateFrom為'none'、或為'auto'(預設)而原生格線於期間內之各偏移下皆與opt.timeZone之界線對齊(例如台北之1m、5m、15m、30m、1hr、2hr、4hr、8hr，UTC之1day，或任何時區之3m)時為此方式。opt.timeZone只決定時間字串之標示與分段起點，例如aggregateFrom為'none'且timeZone為'Asia/Taipei'時1day之各根標為'YYYY-MM-DDT08:00:00'。
+ * (2)合併：opt.aggregateFrom為'auto'(預設)或基底週期鍵，且原生格線與opt.timeZone之界線不對齊時，下載較短之原生週期(基底)後合併，各根以timeZone之界線起訖(例如台北之1day為當地00:00至24:00，由8hr合併3根；UTC+9之4hr由1hr合併4根；UTC+5:30之1hr由30m合併2根)。基底存於'&lt;基底週期鍵>_tz&lt;±HHMM>_d&lt;dayStart之YYYYMMDD>'資料夾，合併之序列存於'&lt;週期鍵>_tz&lt;±HHMM>_d&lt;YYYYMMDD>_from&lt;基底週期鍵>'資料夾，皆不與直接下載之'&lt;週期鍵>'資料夾共用；偏移或dayStart不同之呼叫用不同之資料夾，不會互相覆蓋或錯位(資料夾名可由getIntervalPlan預先得知，亦見回傳之aggregate.key與aggregate.baseKey)。
+ * 基底由週期鍵、timeZone與aggregateFrom決定，與端點無關；價格與溢價指數請以相同之aggregateFrom呼叫(或明給同一個基底週期鍵)，並可比對兩者回傳之aggregate.key是否相同以確認用了同一基底與界線。交易所於少數維護日各週期之資料不一致(實測溢價指數由8hr與由4hr合併之台北日線，2020至2026年約10日不等，多為筆數欄；價格無此現象)，故不同基底之合併結果可能不同，需與既有資料可比者請明給基底週期鍵。
+ * 須合併時timeZone須於資料期間(dayStart至現在後1年)內為固定偏移，有日光節約時間或偏移變動者拋錯(請改給固定偏移，如'Etc/GMT+5'，或執行環境之Intl支援時之'-05:00')，各根之時長恆為該週期之秒數，不提供23或25小時之日；'auto'而目標之原生格線於期間內之各偏移下皆對齊者(例如有日光節約之時區之3m、1hr)為直接下載，不要求固定偏移(直接下載時，日光節約回撥之一小時內時間標示會重複，且切換日之分段沿用既有之限制)。絕對值小於30分之非零偏移不支援(時間函式庫無法正確處理)。
+ * 週期鍵、opt.aggregateFrom(給了而無效)、opt.timeZone無效時拋錯，拋錯先於任何連網、建夾、寫檔，訊息依'invalid &lt;名稱>: must be &lt;種類>'且不帶輸入值。
+ * 合併之規則：開=首根之開、高=最高、低=最低、收=末根之收，量、成交額、筆數、主動買入量與額=加總(十進位精確加總，小數位數取各根之最大者)，開始時間=首根之開始時間，結束時間=末根之結束時間。某目標根之基底各根不齊(交易所缺漏)、未收棒或擷取於收棒前者不輸出，記入回傳之aggregate.missing。合併之分段以分段檔之修改時間判定是否重算(見aggregateData)，刪除合併分段檔即可強制重算。
+ * 直接下載時，分段起點不在各根之對齊格點上者(例如aggregateFrom為'none'時台北之段起點為UTC 16:00，12hr與1day之格點不在此)，每段仍為該段應有筆數，段末根之收棒晚於段終點，完整與否以末根之名目收棒判定；最新分段於其首根開盤前回應為空，此時不寫檔且timeLast與timeKeep為undefined，仍在形成之根屬前一段，由前一段之不完整判定重抓更新。
  *
  * @async
  * @function saveData
@@ -84,10 +94,10 @@ ot.extend(timezone)
  * @param {String} type - 資料類型分類，例如 'spot', 'future' 等
  * @param {String} endpoint - 資料 API 端點（例如幣安的 K 線 API）
  * @param {String} symbol - 幣種交易對，例如 'BTCUSDT'
- * @param {String} interval - K 線間隔（如 '1m', '1h' 等）
+ * @param {String} interval - K 線週期鍵（如 '1m', '1hr', '4hr', '1day' 等，全部週期鍵見上），亦為存檔子資料夾名
  * @param {Object} [opt={}] - 可選設定參數
  * @param {String} [opt.dayStart='2020-01-01'] - 抓取起始時間（ISO 格式）
- * @param {String} [opt.timeZone='Asia/Taipei'] - 時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致，並透傳給 downloadData；僅支援無夏令時間之固定偏移時區，夏令時間切換日之分段會重複或缺漏；變更timeZone或dayStart時須改用新的fdData或刪除既有檔案
+ * @param {String} [opt.timeZone='Asia/Taipei'] - 時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致，並透傳給 downloadData；須合併者須為無夏令時間之固定偏移時區，直接下載者於夏令時間切換日之分段會重複或缺漏；變更timeZone或dayStart時直接下載者須改用新的fdData或刪除既有檔案(合併者之資料夾名含偏移與dayStart，不共用)
  * @param {String} [opt.fdData='./data'] - 儲存的根資料夾路徑
  * @param {Object} [opt.proxy] - axios proxy 設定（如 { protocol, host, port }）
  * @param {Boolean} [opt.useConvertToCsv] - 已停用：一律以 CSV 格式儲存（舊版給予false時會導致不儲存任何檔案）
@@ -95,7 +105,8 @@ ot.extend(timezone)
  * @param {Integer} [opt.timeBudget=0] - 每次呼叫處理舊分段之時間上限毫秒數，超過則剩餘舊分段留待下次呼叫，最新分段不受限，0代表不限
  * @param {Boolean} [opt.useDryRun=false] - 是否只檢查不下載，true時不發請求亦不寫檔，回傳之items列出將被下載之分段與原因
  * @param {Boolean} [opt.useShowLog=false] - 是否顯示 log 資訊
- * @returns {Promise} 回傳Promise，resolve回傳物件 { timeKeep, timeLast, items }，timeLast與timeKeep為本次下載之最新分段末兩列之開始時間（乾跑或最新分段未成功下載時為undefined），items為本次下載（乾跑時為將下載）之分段陣列，各元素為 { tag, ts, te, reason }，reason為'latest'（最新分段）、'notExist'（檔案不存在）或checkDataComplete回傳之不完整原因；reject回傳錯誤訊息
+ * @param {String} [opt.aggregateFrom='auto'] - 取得方式：'auto'(對齊則直接下載，否則自動取基底合併)、'none'(直接下載原生週期)或基底週期鍵(如'1hr'，須能整除目標週期且格線與timeZone之界線對齊，否則拋錯)；undefined與null視為未給(改用'auto')，給了而無效即拋錯(決定資料口徑，不改用預設)
+ * @returns {Promise} 回傳Promise，resolve回傳物件 { timeKeep, timeLast, items }，timeLast與timeKeep為本次下載之最新分段末兩列之開始時間（乾跑或最新分段未成功下載時為undefined），items為本次下載（乾跑時為將下載）之分段陣列，各元素為 { tag, ts, te, reason }，reason為'latest'（最新分段）、'notExist'（檔案不存在）或checkDataComplete回傳之不完整原因；合併時items為基底週期之下載分段，timeLast與timeKeep為最新兩根已合併輸出之目標根之開始時間，另含aggregate物件 { key, base, baseKey, count, utcOffset, fd, segments, missing }：key為合併序列之資料夾名，base為基底週期鍵，baseKey為基底之資料夾名，count為每根由幾根基底合併，utcOffset為時區之UTC偏移分鐘數，fd為合併序列之資料夾絕對路徑，segments為本次重算之分段 [{ tag, n }]，missing為未輸出之目標根 [{ time, have, need, reason }]（reason為'open'尚未收棒、'gap'基底缺漏、'notFinal'基底擷取於收棒前、'invalidBase'基底數值無法解析；早於最早一根基底資料者不列）；reject回傳錯誤訊息
  */
 
 let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
@@ -120,10 +131,94 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
         throw new Error('invalid symbol')
     }
 
-    //check
-    if (!isestr(interval)) {
-        throw new Error('invalid interval')
+    //plan, 直接下載或合併; 週期鍵、aggregateFrom、timeZone無效(含須合併而偏移有變動)時於任何連網、建夾、寫檔前拋錯
+    let plan = getIntervalPlan(interval, opt)
+
+    //native, 直接下載原生週期, 存於以週期鍵命名之資料夾
+    if (plan.mode === 'native') {
+        return saveNative(name, type, endpoint, symbol, interval, opt, interval)
     }
+
+    //base, 以同一機制下載基底週期之分段, 存於plan.baseKey之資料夾(含偏移與dayStart, 不與直接下載之同鍵資料夾共用)
+    let rb = await saveNative(name, type, endpoint, symbol, plan.base, opt, plan.baseKey)
+
+    //timeZone
+    let timeZone = get(opt, 'timeZone')
+    if (!isestr(timeZone)) {
+        timeZone = 'Asia/Taipei'
+    }
+
+    //dayStart
+    let dayStart = get(opt, 'dayStart')
+    if (!isday(dayStart)) {
+        dayStart = '2020-01-01'
+    }
+
+    //fdData
+    let fdData = get(opt, 'fdData')
+    if (!isestr(fdData)) {
+        fdData = './data'
+    }
+
+    //timeGrace
+    let timeGrace = get(opt, 'timeGrace')
+    if (!isp0int(timeGrace)) {
+        timeGrace = 60 * 1000
+    }
+    timeGrace = cint(timeGrace)
+
+    //useDryRun
+    let useDryRun = get(opt, 'useDryRun')
+    if (!isbol(useDryRun)) {
+        useDryRun = false
+    }
+
+    //useShowLog
+    let useShowLog = get(opt, 'useShowLog')
+    if (!isbol(useShowLog)) {
+        useShowLog = false
+    }
+
+    //aggregate, 合併為以timeZone之界線起訖之各根, 存於plan.key之資料夾; 乾跑時不合併
+    let fd = path.resolve(fdData, name, type, plan.key)
+    let r = {
+        segments: [],
+        missing: [],
+        timeLast: undefined,
+        timeKeep: undefined,
+    }
+    if (!useDryRun) {
+        r = aggregateData({
+            fdBase: path.resolve(fdData, name, type, plan.baseKey),
+            fdAgg: fd,
+            plan,
+            timeZone,
+            dayStart,
+            timeGrace,
+            useShowLog,
+        })
+    }
+
+    return {
+        timeKeep: r.timeKeep,
+        timeLast: r.timeLast,
+        items: rb.items,
+        aggregate: {
+            key: plan.key,
+            base: plan.base,
+            baseKey: plan.baseKey,
+            count: plan.count,
+            utcOffset: plan.utcOffset,
+            fd,
+            segments: r.segments,
+            missing: r.missing,
+        },
+    }
+}
+
+
+//saveNative, 直接下載原生週期(interval為週期表之鍵)之分段並存檔(引數已由saveData檢查); folder為存檔之資料夾名
+let saveNative = async(name, type, endpoint, symbol, interval, opt, folder) => {
 
     //timeZone
     let timeZone = get(opt, 'timeZone')
@@ -139,51 +234,8 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
         return ot.tz(input, timeZone)
     }
 
-    //kp
-    let kp = {
-        '1m': {
-            dataInterval: '1m',
-            dataSec: 60,
-            hourInterval: 1,
-            dataNum: 60,
-        },
-        '5m': {
-            dataInterval: '5m',
-            dataSec: 5 * 60,
-            hourInterval: 4,
-            dataNum: 48,
-        },
-        '15m': {
-            dataInterval: '15m',
-            dataSec: 15 * 60,
-            hourInterval: 12,
-            dataNum: 48,
-        },
-        '30m': {
-            dataInterval: '30m',
-            dataSec: 30 * 60,
-            hourInterval: 24, //1天放一個檔案
-            dataNum: 48,
-        },
-        '1hr': {
-            dataInterval: '1h',
-            dataSec: 60 * 60,
-            hourInterval: 24 * 2, //2天放一個檔案
-            dataNum: 48,
-        },
-        '4hr': {
-            dataInterval: '4h',
-            dataSec: 4 * 60 * 60,
-            hourInterval: 24 * 8, //8天放一個檔案
-            dataNum: 48,
-        },
-    }
-
-    //check
-    if (!haskey(kp, interval)) {
-        console.log('kp', kp)
-        throw new Error(`invalid interval[${interval}]`)
-    }
+    //kp, 週期表(dataInterval送交易所之週期, dataSec每根秒數, hourInterval每段時數, dataNum每段筆數), 見intervals.mjs之getIntervals
+    let kp = getIntervals()
 
     //dataInterval, 每筆時間間隔
     let dataInterval = kp[interval].dataInterval
@@ -245,7 +297,7 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
     }
 
     //fd
-    let fd = path.resolve(fdData, name, type, interval)
+    let fd = path.resolve(fdData, name, type, folder)
     if (!fsIsFolder(fd)) {
         fsCreateFolder(fd)
     }
@@ -479,7 +531,7 @@ export default saveData
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Nov 19 2026 01:10:10 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Nov 19 2026 06:26:04 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

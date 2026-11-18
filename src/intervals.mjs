@@ -1,0 +1,315 @@
+import get from 'lodash-es/get.js'
+import keys from 'lodash-es/keys.js'
+import maxBy from 'lodash-es/maxBy.js'
+import isestr from 'wsemi/src/isestr.mjs'
+import isday from 'wsemi/src/isday.mjs'
+
+
+//ANCHOR_SEC, 原生格線之錨點偏移(秒), 1week開於週一UTC 00:00(epoch為週四, 偏移4天), 其餘為UTC epoch之整數倍
+let ANCHOR_SEC = {
+    '1week': 4 * 24 * 60 * 60,
+}
+
+let DAY = 24 * 60 * 60 * 1000
+
+let mod = (x, m) => ((x % m) + m) % m
+
+//hasOwn, 只認物件自有之鍵(wsemi之haskey以in判定, 會把'constructor'、'toString'等原型鏈成員名當成週期鍵)
+let hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
+
+//reLongOffset, Intl之longOffset時區名稱(如'GMT+08:00'、'GMT-03:30'、'GMT')
+let reLongOffset = /^GMT(?:([+-])(\d{1,2}):?(\d{2})?)?$/
+
+
+/**
+ * 取得週期表(每次回傳新物件)。
+ * 各週期鍵：dataInterval送交易所之週期、dataSec每根秒數、hourInterval每段時數、dataNum每段筆數，且hourInterval*3600=dataNum*dataSec。
+ *
+ * @function getIntervals
+ * @returns {Object} 回傳週期表物件，鍵為週期鍵
+ * @example
+ *
+ * import { getIntervals } from './src/intervals.mjs'
+ *
+ * console.log(getIntervals()['1day'])
+ * // => { dataInterval: '1d', dataSec: 86400, hourInterval: 1152, dataNum: 48 }
+ *
+ */
+let getIntervals = () => {
+    return {
+        '1m': {
+            dataInterval: '1m',
+            dataSec: 60,
+            hourInterval: 1,
+            dataNum: 60,
+        },
+        '3m': {
+            dataInterval: '3m',
+            dataSec: 3 * 60,
+            hourInterval: 3,
+            dataNum: 60,
+        },
+        '5m': {
+            dataInterval: '5m',
+            dataSec: 5 * 60,
+            hourInterval: 4,
+            dataNum: 48,
+        },
+        '15m': {
+            dataInterval: '15m',
+            dataSec: 15 * 60,
+            hourInterval: 12,
+            dataNum: 48,
+        },
+        '30m': {
+            dataInterval: '30m',
+            dataSec: 30 * 60,
+            hourInterval: 24, //1天放一個檔案
+            dataNum: 48,
+        },
+        '1hr': {
+            dataInterval: '1h',
+            dataSec: 60 * 60,
+            hourInterval: 24 * 2, //2天放一個檔案
+            dataNum: 48,
+        },
+        '2hr': {
+            dataInterval: '2h',
+            dataSec: 2 * 60 * 60,
+            hourInterval: 24 * 4, //4天放一個檔案
+            dataNum: 48,
+        },
+        '4hr': {
+            dataInterval: '4h',
+            dataSec: 4 * 60 * 60,
+            hourInterval: 24 * 8, //8天放一個檔案
+            dataNum: 48,
+        },
+        '6hr': {
+            dataInterval: '6h',
+            dataSec: 6 * 60 * 60,
+            hourInterval: 24 * 12, //12天放一個檔案
+            dataNum: 48,
+        },
+        '8hr': {
+            dataInterval: '8h',
+            dataSec: 8 * 60 * 60,
+            hourInterval: 24 * 16, //16天放一個檔案
+            dataNum: 48,
+        },
+        '12hr': {
+            dataInterval: '12h',
+            dataSec: 12 * 60 * 60,
+            hourInterval: 24 * 24, //24天放一個檔案
+            dataNum: 48,
+        },
+        '1day': {
+            dataInterval: '1d', //UTC 00:00開盤
+            dataSec: 24 * 60 * 60,
+            hourInterval: 24 * 48, //48天放一個檔案
+            dataNum: 48,
+        },
+        '1week': {
+            dataInterval: '1w', //週一UTC 00:00開盤
+            dataSec: 7 * 24 * 60 * 60,
+            hourInterval: 24 * 7 * 48, //48週放一個檔案
+            dataNum: 48,
+        },
+    }
+}
+
+
+/**
+ * 取得時區於期間內出現之各UTC偏移(分鐘，東為正，由小到大不重複)。偏移以Intl之longOffset取得(不經dayjs，dayjs會把絕對值16以內之偏移值當成小時)。
+ * 期間為dayStart前1天至現在後366天(每7天取樣)，含未來1年使後續之同步(syncData)不會跨入偏移變動。
+ * 時區無效(含執行環境之Intl不支援之偏移字串)、偏移不是整分鐘、或出現絕對值小於30分之非零偏移(時間函式庫無法正確處理)時拋錯，訊息依'invalid <名稱>: must be <種類>'且不帶輸入值。
+ *
+ * @function getOffsets
+ * @param {String} timeZone - 時區，IANA時區名(如'Asia/Taipei'、'Etc/GMT-8')，或執行環境之Intl支援之固定偏移(如'+08:00')
+ * @param {String} [dayStart='2020-01-01'] - 期間起始日
+ * @returns {Array} 回傳偏移分鐘數之陣列
+ * @example
+ *
+ * import { getOffsets } from './src/intervals.mjs'
+ *
+ * console.log(getOffsets('Asia/Taipei', '2020-01-01'))
+ * // => [ 480 ]
+ *
+ * console.log(getOffsets('America/New_York', '2020-01-01'))
+ * // => [ -300, -240 ]
+ *
+ */
+let getOffsets = (timeZone, dayStart = '2020-01-01') => {
+    if (!isestr(timeZone)) {
+        throw new Error(`invalid opt.timeZone: must be a non-empty string`)
+    }
+    if (!isday(dayStart)) {
+        dayStart = '2020-01-01'
+    }
+    let fmt = null
+    try {
+        fmt = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longOffset' })
+    }
+    catch (err) {
+        throw new Error(`invalid opt.timeZone: must be an IANA time zone name on this runtime, e.g. 'Etc/GMT-8'`)
+    }
+    let offsetAt = (t) => {
+        let p = fmt.formatToParts(new Date(t)).find((v) => v.type === 'timeZoneName')
+        let m = reLongOffset.exec(get(p, 'value', ''))
+        if (!m) {
+            throw new Error(`invalid opt.timeZone: must be a time zone whose UTC offset is in whole minutes`)
+        }
+        if (!m[1]) {
+            return 0
+        }
+        let o = Number(m[2]) * 60 + Number(m[3] || 0)
+        return m[1] === '-' ? -o : o
+    }
+    let t0 = Date.parse(`${dayStart}T00:00:00Z`) - DAY
+    let t1 = Date.now() + 366 * DAY
+    let offs = new Set()
+    for (let t = t0; t < t1; t += 7 * DAY) {
+        offs.add(offsetAt(t))
+    }
+    offs.add(offsetAt(t1))
+    offs = [...offs].sort((a, b) => a - b)
+    if (offs.some((o) => o !== 0 && Math.abs(o) < 30)) {
+        throw new Error(`invalid opt.timeZone: must be zero or a UTC offset of at least 30 minutes`)
+    }
+    return offs
+}
+
+
+/**
+ * 依週期鍵、時區與opt.aggregateFrom決定取得方式(直接下載原生週期或由較短之原生週期合併)、存檔資料夾名與基底週期。
+ * aggregateFrom未給(undefined或null)時為'auto'，不分週期鍵。
+ * 'none'：直接下載原生週期(各根以交易所之UTC格線起訖)。
+ * 'auto'：目標之原生格線於期間內出現之各偏移下皆與timeZone之界線對齊者直接下載(有日光節約之時區亦可，例如3m、1hr)；不對齊者取能整除目標週期且格線與timeZone之界線對齊之最大原生週期下載後合併(例如UTC+8之1day為8hr合併3根，UTC+9為1hr合併24根，UTC+5:30為30m合併48根)。
+ * 週期鍵(如'1hr')：以之為基底合併，須能整除目標週期且其格線與timeZone之界線對齊，否則拋錯；與目標週期相同且於各偏移下皆對齊時即直接下載。
+ * 須合併時timeZone須為固定偏移(期間內偏移不變)，各根之時長恆為目標週期之秒數。合併之序列存於'<週期鍵>_tz<±HHMM>_d<dayStart之YYYYMMDD>_from<基底週期鍵>'資料夾，基底存於'<基底週期鍵>_tz<±HHMM>_d<YYYYMMDD>'資料夾，皆不與直接下載之'<週期鍵>'資料夾共用；偏移或dayStart不同者資料夾名不同，不共用。
+ * 週期鍵、aggregateFrom(給了而無效)、timeZone無效時拋錯，訊息為'invalid <名稱>: must be <種類>'且不帶輸入值，拋錯時不連網、不建夾、不寫檔。
+ *
+ * @function getIntervalPlan
+ * @param {String} interval - 週期鍵，見getIntervals
+ * @param {Object} [opt={}] - 設定參數
+ * @param {String} [opt.aggregateFrom='auto'] - 'auto'、'none'或基底週期鍵；undefined與null視為未給，給了而無效者拋錯
+ * @param {String} [opt.timeZone='Asia/Taipei'] - 時區
+ * @param {String} [opt.dayStart='2020-01-01'] - 抓取起始日，供檢查期間內之偏移與組資料夾名
+ * @returns {Object} 回傳物件 { interval, mode, key, base, baseKey, count, dataSec, utcOffset }，mode為'native'(直接下載)或'aggregate'(合併)，key為輸出之資料夾名，base為下載之週期鍵，baseKey為下載之資料夾名(直接下載時同key)，count為每根目標由幾根基底合併，dataSec為目標每根秒數，utcOffset為時區之UTC偏移分鐘數('none'或期間內偏移有變動時為null)
+ * @example
+ *
+ * import { getIntervalPlan } from './src/intervals.mjs'
+ *
+ * console.log(getIntervalPlan('1day', { timeZone: 'Asia/Taipei', dayStart: '2020-01-01' }))
+ * // => { interval: '1day', mode: 'aggregate', key: '1day_tz+0800_d20200101_from8hr', base: '8hr', baseKey: '8hr_tz+0800_d20200101', count: 3, dataSec: 86400, utcOffset: 480 }
+ *
+ * console.log(getIntervalPlan('1day', { timeZone: 'UTC' }).mode)
+ * // => native
+ *
+ * console.log(getIntervalPlan('4hr', { timeZone: 'Asia/Kolkata' }).mode)
+ * // => aggregate
+ *
+ */
+let getIntervalPlan = (interval, opt = {}) => {
+
+    //kp
+    let kp = getIntervals()
+    let ks = keys(kp)
+
+    //check
+    if (!isestr(interval) || !hasOwn(kp, interval)) {
+        throw new Error(`invalid interval: must be one of ${ks.join(', ')}`)
+    }
+    let dataSec = kp[interval].dataSec
+
+    //aggregateFrom, undefined與null視為未給(改用'auto'), 給了而無效即拋(決定資料口徑, 改用預設會使輸出靜默錯置)
+    let aggregateFrom = get(opt, 'aggregateFrom')
+    if (aggregateFrom === undefined || aggregateFrom === null) {
+        aggregateFrom = 'auto'
+    }
+    if (!isestr(aggregateFrom) || (aggregateFrom !== 'auto' && aggregateFrom !== 'none' && !hasOwn(kp, aggregateFrom))) {
+        throw new Error(`invalid opt.aggregateFrom: must be one of auto, none, ${ks.join(', ')}`)
+    }
+
+    //timeZone, dayStart
+    let timeZone = get(opt, 'timeZone')
+    if (!isestr(timeZone)) {
+        timeZone = 'Asia/Taipei'
+    }
+    let dayStart = get(opt, 'dayStart')
+    if (!isday(dayStart)) {
+        dayStart = '2020-01-01'
+    }
+
+    //offsets, 期間內出現之各偏移(分鐘), 同時檢測timeZone(各取得方式皆先檢測, 先於任何副作用)
+    let offsets = getOffsets(timeZone, dayStart)
+
+    //native
+    let native = {
+        interval,
+        mode: 'native',
+        key: interval,
+        base: interval,
+        baseKey: interval,
+        count: 1,
+        dataSec,
+        utcOffset: null,
+    }
+    if (aggregateFrom === 'none') {
+        return native
+    }
+    native.utcOffset = offsets.length === 1 ? offsets[0] : null
+
+    //alignedAt, 基底(每根b秒, 錨點a秒)能整除目標週期(故不長於目標), 且偏移oMin下目標之各根起點(timeZone之界線)皆落在基底之格線上
+    let aT = get(ANCHOR_SEC, interval, 0)
+    let alignedAt = (k, oMin) => {
+        let b = kp[k].dataSec
+        let a = get(ANCHOR_SEC, k, 0)
+        return dataSec % b === 0 && mod(aT - oMin * 60 - a, b) === 0
+    }
+
+    //直接下載: 目標之原生格線於期間內之各偏移下皆與界線對齊(有日光節約之時區亦可, 例如3m、1hr)
+    if ((aggregateFrom === 'auto' || aggregateFrom === interval) && offsets.every((oMin) => alignedAt(interval, oMin))) {
+        return native
+    }
+
+    //合併: 偏移須固定
+    if (offsets.length > 1) {
+        throw new Error(`invalid opt.timeZone: must be a fixed-offset time zone without daylight saving time, e.g. 'Etc/GMT+5' or '-05:00'`)
+    }
+    let utcOffset = offsets[0]
+    let aligned = (k) => alignedAt(k, utcOffset)
+
+    //base, auto取aligned之最大基底(偏移為整分鐘, 1m必為候選, 故一定有基底); 指定者須aligned(目標自身於此已確知不對齊, 故指定自身亦拋錯)
+    let base = ''
+    if (aggregateFrom === 'auto') {
+        base = maxBy(ks.filter((k) => k !== interval && aligned(k)), (k) => kp[k].dataSec)
+    }
+    else {
+        if (!aligned(aggregateFrom)) {
+            throw new Error(`invalid opt.aggregateFrom: must be an interval that divides interval and aligns with the boundaries of timeZone`)
+        }
+        base = aggregateFrom
+    }
+
+    //key, baseKey, 資料夾名含偏移與dayStart(分段之起點), 參數不同者不共用資料夾
+    let s = utcOffset >= 0 ? '+' : '-'
+    let m = Math.abs(utcOffset)
+    let tz = `${s}${String(Math.floor(m / 60)).padStart(2, '0')}${String(m % 60).padStart(2, '0')}`
+    let ds = dayStart.split('-').join('')
+
+    return {
+        interval,
+        mode: 'aggregate',
+        key: `${interval}_tz${tz}_d${ds}_from${base}`,
+        base,
+        baseKey: `${base}_tz${tz}_d${ds}`,
+        count: dataSec / kp[base].dataSec,
+        dataSec,
+        utcOffset,
+    }
+}
+
+
+export { ANCHOR_SEC, getIntervals, getOffsets, getIntervalPlan }
+export default getIntervalPlan

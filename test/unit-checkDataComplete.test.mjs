@@ -148,6 +148,27 @@ describe('unit-checkDataComplete', function() {
         }
     })
 
+    it('U9b 新增週期(3m、2hr、6hr、8hr、12hr、1day、1week)之名目收棒皆為末列開盤加每筆時長, 段起點不在格點上亦同', function() {
+        //R08、saveData 週期表: dataSec 180/7200/21600/28800/43200/86400/604800; 台北之段起點(16:00Z)不在 12hr、1day、1week 之格點上, 首根晚於段起點開盤
+        let ks = [
+            { dataSec: 180, dataNum: 60, firstOpen: '2026-09-21T16:00:00Z' },
+            { dataSec: 7200, dataNum: 48, firstOpen: '2026-09-21T16:00:00Z' },
+            { dataSec: 21600, dataNum: 48, firstOpen: '2026-09-21T18:00:00Z' },
+            { dataSec: 28800, dataNum: 48, firstOpen: '2026-09-21T16:00:00Z' },
+            { dataSec: 43200, dataNum: 48, firstOpen: '2026-09-22T00:00:00Z' },
+            { dataSec: 86400, dataNum: 48, firstOpen: '2026-09-22T00:00:00Z' },
+            { dataSec: 604800, dataNum: 48, firstOpen: '2026-09-28T00:00:00Z' },
+        ]
+        for (let k of ks) {
+            let startMs = Date.parse(k.firstOpen)
+            let c = mkCsv({ startMs, n: k.dataNum, dataSec: k.dataSec })
+            let close = startMs + k.dataNum * k.dataSec * 1000
+            let o = { dataNum: k.dataNum, dataSec: k.dataSec }
+            assert.deepStrictEqual(checkDataComplete(c, { ...o, mtimeMs: close + grace - 1 }), { complete: false, reason: 'beforeClose' }, `dataSec=${k.dataSec}`)
+            assert.deepStrictEqual(checkDataComplete(c, { ...o, mtimeMs: close + grace }), { complete: true, reason: '' }, `dataSec=${k.dataSec}`)
+        }
+    })
+
     it('U10 溢價指數格式(量欄為0)之判定同現貨', function() {
         //R01、R02: 欄位位置相同
         let c = mkCsv({ startMs: start4h, n: 48, dataSec: 14400, index: true })
