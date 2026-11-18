@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#checkDataComplete">checkDataComplete</a></li><li><a href="global.html#downloadData">downloadData</a></li><li><a href="global.html#saveData">saveData</a></li><li><a href="global.html#syncData">syncData</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#aggregateData">aggregateData</a></li><li><a href="global.html#checkDataComplete">checkDataComplete</a></li><li><a href="global.html#downloadData">downloadData</a></li><li><a href="global.html#getIntervalPlan">getIntervalPlan</a></li><li><a href="global.html#getIntervals">getIntervals</a></li><li><a href="global.html#getOffsets">getOffsets</a></li><li><a href="global.html#saveData">saveData</a></li><li><a href="global.html#syncData">syncData</a></li></ul>
     
 </nav>
 
@@ -124,6 +124,452 @@
 
     
         <h3 class="subsection-title">Methods</h3>
+
+        
+            
+
+    
+
+    <h4 class="name" id="aggregateData"><span class="type-signature"></span>aggregateData<span class="signature">(opt)</span><span class="type-signature"> &rarr; {Object}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>將基底週期之分段檔合併為目標週期之分段檔，各根以timeZone(固定偏移)之界線起訖，供saveData於合併時使用。
+目標之分段同目標週期鍵之分段(自dayStart 00:00起每段hourInterval小時)；分段檔不存在、根數少於該段應有根數、為最新分段、或所需之基底分段檔之修改時間晚於該分段檔者重算，其餘沿用(以外部方式改動基底分段檔而未令其修改時間晚於合併分段檔者不會重算，刪除該合併分段檔即可強制重算)。
+某目標根之基底各根須齊全且皆已定稿(基底所在分段檔之修改時間不早於該基底根之名目收棒加寬限)，否則不輸出該根並記入missing：reason為'open'(目標根尚未收棒加寬限)、'gap'(基底根缺漏)、'invalidBase'(基底根之數值欄無法解析)或'notFinal'(基底根擷取於其收棒前)；早於最早一根基底資料之目標根不列入。</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="aggregateData.mjs.html">aggregateData.mjs</a>, <a href="aggregateData.mjs.html#line103">line 103</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-parameters">Parameters:</h5>
+    
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>opt</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last"><p>設定參數</p>
+                <h6>Properties</h6>
+                
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+        <th>Attributes</th>
+        
+
+        
+        <th>Default</th>
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>fdBase</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>基底週期之分段檔資料夾</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>fdAgg</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>合併序列之分段檔資料夾</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>plan</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>getIntervalPlan之回傳(mode須為'aggregate')</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>timeZone</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>時區</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>dayStart</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>抓取起始日</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>timeGrace</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Integer</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>名目收棒後之寬限毫秒數</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>useShowLog</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Boolean</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>false</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>是否顯示log</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+            </td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>回傳物件 { segments, missing, timeLast, timeKeep }，segments為本次重算之分段 [{ tag, n }]，missing為未輸出之目標根 [{ time, have, need, reason }]，timeLast與timeKeep為最新兩根已輸出目標根之開始時間(無則undefined)</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Object</span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
 
         
             
@@ -1100,6 +1546,716 @@ console.log(checkDataComplete(c, { dataNum: 48, dataSec: 14400, mtimeMs: tClose 
 
     
 
+    <h4 class="name" id="getIntervalPlan"><span class="type-signature"></span>getIntervalPlan<span class="signature">(interval, opt<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Object}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>依週期鍵、時區與opt.aggregateFrom決定取得方式(直接下載原生週期或由較短之原生週期合併)、存檔資料夾名與基底週期。
+aggregateFrom未給(undefined或null)時為'auto'，不分週期鍵。
+'none'：直接下載原生週期(各根以交易所之UTC格線起訖)。
+'auto'：目標之原生格線於期間內出現之各偏移下皆與timeZone之界線對齊者直接下載(有日光節約之時區亦可，例如3m、1hr)；不對齊者取能整除目標週期且格線與timeZone之界線對齊之最大原生週期下載後合併(例如UTC+8之1day為8hr合併3根，UTC+9為1hr合併24根，UTC+5:30為30m合併48根)。
+週期鍵(如'1hr')：以之為基底合併，須能整除目標週期且其格線與timeZone之界線對齊，否則拋錯；與目標週期相同且於各偏移下皆對齊時即直接下載。
+須合併時timeZone須為固定偏移(期間內偏移不變)，各根之時長恆為目標週期之秒數。合併之序列存於'&lt;週期鍵&gt;_tz&lt;±HHMM&gt;_d&lt;dayStart之YYYYMMDD&gt;_from&lt;基底週期鍵&gt;'資料夾，基底存於'&lt;基底週期鍵&gt;_tz&lt;±HHMM&gt;_d<YYYYMMDD>'資料夾，皆不與直接下載之'&lt;週期鍵&gt;'資料夾共用；偏移或dayStart不同者資料夾名不同，不共用。
+週期鍵、aggregateFrom(給了而無效)、timeZone無效時拋錯，訊息為'invalid &lt;名稱&gt;: must be &lt;種類&gt;'且不帶輸入值，拋錯時不連網、不建夾、不寫檔。</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="intervals.mjs.html">intervals.mjs</a>, <a href="intervals.mjs.html#line183">line 183</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-examples">Example</h5>
+    
+    <pre class="prettyprint"><code>import { getIntervalPlan } from './src/intervals.mjs'console.log(getIntervalPlan('1day', { timeZone: 'Asia/Taipei', dayStart: '2020-01-01' }))// => { interval: '1day', mode: 'aggregate', key: '1day_tz+0800_d20200101_from8hr', base: '8hr', baseKey: '8hr_tz+0800_d20200101', count: 3, dataSec: 86400, utcOffset: 480 }console.log(getIntervalPlan('1day', { timeZone: 'UTC' }).mode)// => nativeconsole.log(getIntervalPlan('4hr', { timeZone: 'Asia/Kolkata' }).mode)// => aggregate</code></pre>
+
+
+
+
+    <h5 class="h5-parameters">Parameters:</h5>
+    
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+        <th>Attributes</th>
+        
+
+        
+        <th>Default</th>
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>interval</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>週期鍵，見getIntervals</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>opt</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>{}</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>設定參數</p>
+                <h6>Properties</h6>
+                
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+        <th>Attributes</th>
+        
+
+        
+        <th>Default</th>
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>aggregateFrom</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>'auto'</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>'auto'、'none'或基底週期鍵；undefined與null視為未給，給了而無效者拋錯</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>timeZone</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>'Asia/Taipei'</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>時區</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>dayStart</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>'2020-01-01'</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>抓取起始日，供檢查期間內之偏移與組資料夾名</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+            </td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>回傳物件 { interval, mode, key, base, baseKey, count, dataSec, utcOffset }，mode為'native'(直接下載)或'aggregate'(合併)，key為輸出之資料夾名，base為下載之週期鍵，baseKey為下載之資料夾名(直接下載時同key)，count為每根目標由幾根基底合併，dataSec為目標每根秒數，utcOffset為時區之UTC偏移分鐘數('none'或期間內偏移有變動時為null)</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Object</span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
+
+        
+            
+
+    
+
+    <h4 class="name" id="getIntervals"><span class="type-signature"></span>getIntervals<span class="signature">()</span><span class="type-signature"> &rarr; {Object}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>取得週期表(每次回傳新物件)。
+各週期鍵：dataInterval送交易所之週期、dataSec每根秒數、hourInterval每段時數、dataNum每段筆數，且hourInterval<em>3600=dataNum</em>dataSec。</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="intervals.mjs.html">intervals.mjs</a>, <a href="intervals.mjs.html#line24">line 24</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-examples">Example</h5>
+    
+    <pre class="prettyprint"><code>import { getIntervals } from './src/intervals.mjs'console.log(getIntervals()['1day'])// => { dataInterval: '1d', dataSec: 86400, hourInterval: 1152, dataNum: 48 }</code></pre>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>回傳週期表物件，鍵為週期鍵</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Object</span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
+
+        
+            
+
+    
+
+    <h4 class="name" id="getOffsets"><span class="type-signature"></span>getOffsets<span class="signature">(timeZone, dayStart<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Array}</span></h4>
+
+    
+
+
+
+
+<dl class="details">
+    
+    <dt class="tag-description">Description:</dt>
+    <dd class="tag-description"><ul class="dummy"><li><p>取得時區於期間內出現之各UTC偏移(分鐘，東為正，由小到大不重複)。偏移以Intl之longOffset取得(不經dayjs，dayjs會把絕對值16以內之偏移值當成小時)。
+期間為dayStart前1天至現在後366天(每7天取樣)，含未來1年使後續之同步(syncData)不會跨入偏移變動。
+時區無效(含執行環境之Intl不支援之偏移字串)、偏移不是整分鐘、或出現絕對值小於30分之非零偏移(時間函式庫無法正確處理)時拋錯，訊息依'invalid &lt;名稱&gt;: must be &lt;種類&gt;'且不帶輸入值。</p></li></ul></dd>
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="intervals.mjs.html">intervals.mjs</a>, <a href="intervals.mjs.html#line122">line 122</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+    <h5 class="h5-examples">Example</h5>
+    
+    <pre class="prettyprint"><code>import { getOffsets } from './src/intervals.mjs'console.log(getOffsets('Asia/Taipei', '2020-01-01'))// => [ 480 ]console.log(getOffsets('America/New_York', '2020-01-01'))// => [ -300, -240 ]</code></pre>
+
+
+
+
+    <h5 class="h5-parameters">Parameters:</h5>
+    
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+        <th>Attributes</th>
+        
+
+        
+        <th>Default</th>
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>timeZone</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
+            
+
+            <td class="description last"><p>時區，IANA時區名(如'Asia/Taipei'、'Etc/GMT-8')，或執行環境之Intl支援之固定偏移(如'+08:00')</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>dayStart</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>'2020-01-01'</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>期間起始日</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<h5 class="h5-returns">Returns:</h5>
+
+        
+<div class="param-desc">
+    <p>回傳偏移分鐘數之陣列</p>
+</div>
+
+
+
+<dl class="param-type">
+    <dt>
+        Type
+    </dt>
+    <dd>
+        
+<span class="param-type">Array</span>
+
+
+
+    </dd>
+</dl>
+
+    
+
+
+
+        
+            
+
+    
+
     <h4 class="name" id="saveData"><span class="type-signature type-signature-async">(async) </span>saveData<span class="signature">(name, type, endpoint, symbol, interval, opt<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Promise}</span></h4>
 
     
@@ -1114,13 +2270,22 @@ console.log(checkDataComplete(c, { dataNum: 48, dataSec: 14400, mtimeMs: tClose 
 若該分段已存在資料檔，且完整，則跳過；否則會下載並儲存成 CSV 檔；最新分段每次必下載。
 完整之定義見checkDataComplete：有內容、末列可解析、筆數等於分段應有筆數，且檔案修改時間不早於末列名目收棒時刻加寬限(opt.timeGrace)。
 寫檔後會將檔案修改時間設為送出請求前之時刻，作為資料擷取時刻之保守下界；判定依賴檔案修改時間，複製資料時若未保留修改時間將無法偵測未收棒之末根，刪除該檔即可強制重抓。
-處理順序為最新分段優先，其餘分段由新到舊；給予opt.timeBudget時，超過之舊分段留待下次呼叫，令長時間回補期間最新分段仍能更新。</p></li></ul></dd>
+處理順序為最新分段優先，其餘分段由新到舊；給予opt.timeBudget時，超過之舊分段留待下次呼叫，令長時間回補期間最新分段仍能更新。
+週期鍵(interval)與送交易所之週期、每段時長、每段筆數：'1m'(1m, 1小時, 60筆)、'3m'(3m, 3小時, 60筆)、'5m'(5m, 4小時, 48筆)、'15m'(15m, 12小時, 48筆)、'30m'(30m, 1天, 48筆)、'1hr'(1h, 2天, 48筆)、'2hr'(2h, 4天, 48筆)、'4hr'(4h, 8天, 48筆)、'6hr'(6h, 12天, 48筆)、'8hr'(8h, 16天, 48筆)、'12hr'(12h, 24天, 48筆)、'1day'(1d, 48天, 48筆)、'1week'(1w, 48週, 48筆)；每段時長皆為每根時長之整數倍。交易所之3d(現貨與合約溢價指數之開盤對齊不同)、1M(每根長度不固定)、1s(合約不支援)不支援。
+取得方式(見intervals.mjs之getIntervalPlan)：交易所原生之格線以UTC為錨(1day為UTC 00:00，1week為週一UTC 00:00，日內週期為UTC epoch之整數倍)，本函數不送交易所之timeZone參數(合約端點不支援)。
+(1)直接下載原生週期：各根以交易所之UTC格線起訖，存於'&lt;週期鍵&gt;'資料夾。opt.aggregateFrom為'none'、或為'auto'(預設)而原生格線於期間內之各偏移下皆與opt.timeZone之界線對齊(例如台北之1m、5m、15m、30m、1hr、2hr、4hr、8hr，UTC之1day，或任何時區之3m)時為此方式。opt.timeZone只決定時間字串之標示與分段起點，例如aggregateFrom為'none'且timeZone為'Asia/Taipei'時1day之各根標為'YYYY-MM-DDT08:00:00'。
+(2)合併：opt.aggregateFrom為'auto'(預設)或基底週期鍵，且原生格線與opt.timeZone之界線不對齊時，下載較短之原生週期(基底)後合併，各根以timeZone之界線起訖(例如台北之1day為當地00:00至24:00，由8hr合併3根；UTC+9之4hr由1hr合併4根；UTC+5:30之1hr由30m合併2根)。基底存於'&lt;基底週期鍵&gt;_tz&lt;±HHMM&gt;_d&lt;dayStart之YYYYMMDD&gt;'資料夾，合併之序列存於'&lt;週期鍵&gt;_tz&lt;±HHMM&gt;_d<YYYYMMDD>_from&lt;基底週期鍵&gt;'資料夾，皆不與直接下載之'&lt;週期鍵&gt;'資料夾共用；偏移或dayStart不同之呼叫用不同之資料夾，不會互相覆蓋或錯位(資料夾名可由getIntervalPlan預先得知，亦見回傳之aggregate.key與aggregate.baseKey)。
+基底由週期鍵、timeZone與aggregateFrom決定，與端點無關；價格與溢價指數請以相同之aggregateFrom呼叫(或明給同一個基底週期鍵)，並可比對兩者回傳之aggregate.key是否相同以確認用了同一基底與界線。交易所於少數維護日各週期之資料不一致(實測溢價指數由8hr與由4hr合併之台北日線，2020至2026年約10日不等，多為筆數欄；價格無此現象)，故不同基底之合併結果可能不同，需與既有資料可比者請明給基底週期鍵。
+須合併時timeZone須於資料期間(dayStart至現在後1年)內為固定偏移，有日光節約時間或偏移變動者拋錯(請改給固定偏移，如'Etc/GMT+5'，或執行環境之Intl支援時之'-05:00')，各根之時長恆為該週期之秒數，不提供23或25小時之日；'auto'而目標之原生格線於期間內之各偏移下皆對齊者(例如有日光節約之時區之3m、1hr)為直接下載，不要求固定偏移(直接下載時，日光節約回撥之一小時內時間標示會重複，且切換日之分段沿用既有之限制)。絕對值小於30分之非零偏移不支援(時間函式庫無法正確處理)。
+週期鍵、opt.aggregateFrom(給了而無效)、opt.timeZone無效時拋錯，拋錯先於任何連網、建夾、寫檔，訊息依'invalid &lt;名稱&gt;: must be &lt;種類&gt;'且不帶輸入值。
+合併之規則：開=首根之開、高=最高、低=最低、收=末根之收，量、成交額、筆數、主動買入量與額=加總(十進位精確加總，小數位數取各根之最大者)，開始時間=首根之開始時間，結束時間=末根之結束時間。某目標根之基底各根不齊(交易所缺漏)、未收棒或擷取於收棒前者不輸出，記入回傳之aggregate.missing。合併之分段以分段檔之修改時間判定是否重算(見aggregateData)，刪除合併分段檔即可強制重算。
+直接下載時，分段起點不在各根之對齊格點上者(例如aggregateFrom為'none'時台北之段起點為UTC 16:00，12hr與1day之格點不在此)，每段仍為該段應有筆數，段末根之收棒晚於段終點，完整與否以末根之名目收棒判定；最新分段於其首根開盤前回應為空，此時不寫檔且timeLast與timeKeep為undefined，仍在形成之根屬前一段，由前一段之不完整判定重抓更新。</p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="saveData.mjs.html">saveData.mjs</a>, <a href="saveData.mjs.html#line27">line 27</a>
+        <a href="saveData.mjs.html">saveData.mjs</a>, <a href="saveData.mjs.html#line28">line 28</a>
     </li></ul></dd>
     
 
@@ -1369,7 +2534,7 @@ console.log(checkDataComplete(c, { dataNum: 48, dataSec: 14400, mtimeMs: tClose 
                 </td>
             
 
-            <td class="description last"><p>K 線間隔（如 '1m', '1h' 等）</p></td>
+            <td class="description last"><p>K 線週期鍵（如 '1m', '1hr', '4hr', '1day' 等，全部週期鍵見上），亦為存檔子資料夾名</p></td>
         </tr>
 
     
@@ -1512,7 +2677,7 @@ console.log(checkDataComplete(c, { dataNum: 48, dataSec: 14400, mtimeMs: tClose 
                 </td>
             
 
-            <td class="description last"><p>時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致，並透傳給 downloadData；僅支援無夏令時間之固定偏移時區，夏令時間切換日之分段會重複或缺漏；變更timeZone或dayStart時須改用新的fdData或刪除既有檔案</p></td>
+            <td class="description last"><p>時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致，並透傳給 downloadData；須合併者須為無夏令時間之固定偏移時區，直接下載者於夏令時間切換日之分段會重複或缺漏；變更timeZone或dayStart時直接下載者須改用新的fdData或刪除既有檔案(合併者之資料夾名含偏移與dayStart，不共用)</p></td>
         </tr>
 
     
@@ -1792,6 +2957,46 @@ console.log(checkDataComplete(c, { dataNum: 48, dataSec: 14400, mtimeMs: tClose 
         </tr>
 
     
+
+        <tr>
+            
+                <td class="name"><code>aggregateFrom</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>'auto'</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>取得方式：'auto'(對齊則直接下載，否則自動取基底合併)、'none'(直接下載原生週期)或基底週期鍵(如'1hr'，須能整除目標週期且格線與timeZone之界線對齊，否則拋錯)；undefined與null視為未給(改用'auto')，給了而無效即拋錯(決定資料口徑，不改用預設)</p></td>
+        </tr>
+
+    
     </tbody>
 </table>
 
@@ -1821,7 +3026,7 @@ console.log(checkDataComplete(c, { dataNum: 48, dataSec: 14400, mtimeMs: tClose 
 
         
 <div class="param-desc">
-    <p>回傳Promise，resolve回傳物件 { timeKeep, timeLast, items }，timeLast與timeKeep為本次下載之最新分段末兩列之開始時間（乾跑或最新分段未成功下載時為undefined），items為本次下載（乾跑時為將下載）之分段陣列，各元素為 { tag, ts, te, reason }，reason為'latest'（最新分段）、'notExist'（檔案不存在）或checkDataComplete回傳之不完整原因；reject回傳錯誤訊息</p>
+    <p>回傳Promise，resolve回傳物件 { timeKeep, timeLast, items }，timeLast與timeKeep為本次下載之最新分段末兩列之開始時間（乾跑或最新分段未成功下載時為undefined），items為本次下載（乾跑時為將下載）之分段陣列，各元素為 { tag, ts, te, reason }，reason為'latest'（最新分段）、'notExist'（檔案不存在）或checkDataComplete回傳之不完整原因；合併時items為基底週期之下載分段，timeLast與timeKeep為最新兩根已合併輸出之目標根之開始時間，另含aggregate物件 { key, base, baseKey, count, utcOffset, fd, segments, missing }：key為合併序列之資料夾名，base為基底週期鍵，baseKey為基底之資料夾名，count為每根由幾根基底合併，utcOffset為時區之UTC偏移分鐘數，fd為合併序列之資料夾絕對路徑，segments為本次重算之分段 [{ tag, n }]，missing為未輸出之目標根 [{ time, have, need, reason }]（reason為'open'尚未收棒、'gap'基底缺漏、'notFinal'基底擷取於收棒前、'invalidBase'基底數值無法解析；早於最早一根基底資料者不列）；reject回傳錯誤訊息</p>
 </div>
 
 
@@ -1866,7 +3071,7 @@ console.log(checkDataComplete(c, { dataNum: 48, dataSec: 14400, mtimeMs: tClose 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="syncData.mjs.html">syncData.mjs</a>, <a href="syncData.mjs.html#line19">line 19</a>
+        <a href="syncData.mjs.html">syncData.mjs</a>, <a href="syncData.mjs.html#line20">line 20</a>
     </li></ul></dd>
     
 
@@ -2222,7 +3427,47 @@ console.log(checkDataComplete(c, { dataNum: 48, dataSec: 14400, mtimeMs: tClose 
                 </td>
             
 
-            <td class="description last"><p>K 線時間間隔（如 '1m', '5m', '1h'）</p></td>
+            <td class="description last"><p>K 線週期鍵（如 '1m', '5m', '1hr', '4hr', '1day'），透傳給 saveData，全部週期鍵與取得方式(直接下載或依時區合併)見 saveData</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>aggregateFrom</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">string</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>'auto'</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>取得方式('auto'、'none'或基底週期鍵)，透傳給 saveData，見 saveData；週期鍵、取得方式與時區於建立時即以 getIntervalPlan 檢查，無效即拋(未啟動計時器)</p></td>
         </tr>
 
     
@@ -2262,7 +3507,7 @@ console.log(checkDataComplete(c, { dataNum: 48, dataSec: 14400, mtimeMs: tClose 
                 </td>
             
 
-            <td class="description last"><p>時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致，並透傳給 saveData；僅支援無夏令時間之固定偏移時區，變更timeZone或dayStart時須改用新的fdData或刪除既有檔案</p></td>
+            <td class="description last"><p>時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致，並透傳給 saveData；須合併者須為無夏令時間之固定偏移時區，直接下載者於夏令時間切換日之分段會重複或缺漏；變更timeZone或dayStart時直接下載者須改用新的fdData或刪除既有檔案(合併者之資料夾名含偏移與dayStart，不共用)，詳見 saveData</p></td>
         </tr>
 
     
@@ -2615,7 +3860,7 @@ console.log(checkDataComplete(c, { dataNum: 48, dataSec: 14400, mtimeMs: tClose 
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Nov 19 2026 01:10:10 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Nov 19 2026 06:26:04 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>
