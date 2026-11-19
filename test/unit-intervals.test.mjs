@@ -242,7 +242,7 @@ describe('unit-intervals', function() {
     it('I9 WDwdataBinace() 掛出 getIntervalPlan(不連網), 與 intervals.mjs 之同一函數', function() {
         //規格: README 〈Intervals and day boundary〉: 可用 getIntervalPlan(interval, opt) 預先查得取得方式與資料夾名(不連網), 亦掛於 WDwdataBinace()
         let wdd = WDwdataBinace()
-        assert.deepStrictEqual(Object.keys(wdd).sort(), ['downloadData', 'getIntervalPlan', 'saveData', 'syncData'])
+        assert.deepStrictEqual(Object.keys(wdd).sort(), ['downloadData', 'getIntervalPlan', 'readGaps', 'saveData', 'syncData'])
         assert.strictEqual(wdd.getIntervalPlan, getIntervalPlan)
         assert.deepStrictEqual(wdd.getIntervalPlan('1day', { timeZone: 'Asia/Taipei', dayStart: '2022-07-01' }), agg('1day', '+0800', '8hr', 3, 86400, 480, '20220701'))
     })

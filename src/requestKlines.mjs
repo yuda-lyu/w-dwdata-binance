@@ -1,0 +1,214 @@
+import axios from 'axios'
+import get from 'lodash-es/get.js'
+import some from 'lodash-es/some.js'
+import isarr from 'wsemi/src/isarr.mjs'
+import delay from 'wsemi/src/delay.mjs'
+import timers from './timers.mjs'
+import readIntOpt from './opts.mjs'
+
+
+//FETCH_OPTS, 請求之選項: [名稱, 預設, iseint之範圍]; 計時毫秒用'timer'(上限2147483647, 超過時setTimeout會改以1毫秒觸發), 次數用'count'
+let FETCH_OPTS = [
+    ['retryTimes', 3, { use: 'count' }],
+    ['timeRetry', 1000, { use: 'timer' }],
+    ['timeRetryMax', 60 * 1000, { use: 'timer' }],
+    ['timeRequest', 30 * 1000, { use: 'timer', min: 1 }],
+    ['netFailTimes', 3, { use: 'count' }],
+]
+
+
+/**
+ * 取得請求之選項(重試次數、重試間隔、等待上限、逾時、連續連線層失敗之停止段數)。皆為執行參數：undefined與null視為未給，給了而無效(非整數、Infinity、'0x10'、負數、超出範圍等)者改用預設，不拋錯(輸入檢測規格K3)；整數類接受數字字串並轉為數值(K7，如'3'即3)，其後一律使用轉換值(K4)。
+ *
+ * @function getFetchOpts
+ * @param {Object} [opt={}] - 設定參數
+ * @param {Integer} [opt.retryTimes=3] - 請求失敗後之重試次數(非負整數)，0代表不重試
+ * @param {Integer} [opt.timeRetry=1000] - 第i次重試前等待timeRetry*3^(i-1)毫秒(預設1、3、9秒；非負整數，上限2147483647)，每次等待不超過timeRetryMax
+ * @param {Integer} [opt.timeRetryMax=60000] - 每次等待之上限毫秒數(非負整數，上限2147483647)；交易所以429回應而Retry-After超過此值時，本次執行停止送出後續請求
+ * @param {Integer} [opt.timeRequest=30000] - 單一請求之逾時毫秒數(正整數，上限2147483647，自送出至收完回應)
+ * @param {Integer} [opt.netFailTimes=3] - saveData於連續此數之分段皆為連線層失敗(連線錯誤、逾時)時，停止本次執行之後續請求(非負整數)，0代表不停止
+ * @returns {Object} 回傳物件 { retryTimes, timeRetry, timeRetryMax, timeRequest, netFailTimes }
+ */
+let getFetchOpts = (opt = {}) => {
+    let r = {}
+    for (let [k, def, spec] of FETCH_OPTS) {
+        let o = readIntOpt(opt, k, spec)
+        r[k] = o.state === 'ok' ? o.value : def
+    }
+    return r
+}
+
+
+//requestOnce, 送出一次GET; 自送出至收完回應超過timeRequest即中止, 任何HTTP狀態皆回傳回應而不拋
+let requestOnce = async (url, params, timeRequest) => {
+    let ac = new AbortController()
+    let timer = setTimeout(() => {
+        ac.abort()
+    }, timeRequest)
+    try {
+        let response = await axios.get(url, {
+            params,
+            signal: ac.signal,
+            validateStatus: () => true,
+        })
+        return { response, err: null, aborted: false }
+    }
+    catch (err) {
+        return { response: null, err, aborted: ac.signal.aborted }
+    }
+    finally {
+        clearTimeout(timer)
+    }
+}
+
+
+//parseRetryAfter, Retry-After標頭(秒數或HTTP日期)轉為毫秒, 無或無法解析時為null
+let parseRetryAfter = (response) => {
+    let v = get(response, ['headers', 'retry-after'])
+    if (typeof v !== 'string' && typeof v !== 'number') {
+        return null
+    }
+    v = String(v).trim()
+    if (/^\d+$/.test(v)) {
+        return Number(v) * 1000
+    }
+    let t = Date.parse(v)
+    if (Number.isNaN(t)) {
+        return null
+    }
+    return Math.max(0, t - Date.now())
+}
+
+
+/**
+ * 將一次請求之結果分類。
+ * kind：'ok'(HTTP 2xx且回應為陣列、各列皆為陣列，含空陣列)、'invalidResponse'(HTTP 2xx而回應非陣列，例如代理或防火牆之HTML頁面)、'rateLimited'(429)、'banned'(418)、'blocked'(403)、'badRequest'(400，交易對、週期或參數有誤)、'httpError'(其餘之HTTP狀態)、'timeout'(逾時)、'network'(連線錯誤等無回應)。
+ *
+ * @function classifyResult
+ * @param {Object} rr - requestOnce之回傳
+ * @returns {Object} 回傳物件 { kind, httpStatus, code, retryAfter, retry }，code為交易所錯誤回應之數字代碼(無則null)，retryAfter為Retry-After之毫秒數(無則null)，retry為是否重試
+ */
+let classifyResult = (rr) => {
+    if (rr.err) {
+        let code = get(rr.err, 'code', null)
+        if (typeof code !== 'string') {
+            code = null
+        }
+        let isTimeout = rr.aborted || code === 'ECONNABORTED' || code === 'ETIMEDOUT'
+        return {
+            kind: isTimeout ? 'timeout' : 'network',
+            httpStatus: null,
+            code,
+            retryAfter: null,
+            retry: true,
+        }
+    }
+    let response = rr.response
+    let s = response.status
+    let data = response.data
+    if (s >= 200 && s < 300) {
+        if (isarr(data) && !some(data, (v) => !isarr(v))) {
+            return { kind: 'ok', httpStatus: s, code: null, retryAfter: null, retry: false }
+        }
+        return { kind: 'invalidResponse', httpStatus: s, code: null, retryAfter: null, retry: true }
+    }
+    let code = get(data, 'code', null)
+    if (!Number.isSafeInteger(code)) {
+        code = null
+    }
+    let retryAfter = parseRetryAfter(response)
+    if (s === 429) {
+        return { kind: 'rateLimited', httpStatus: s, code, retryAfter, retry: true }
+    }
+    if (s === 418) {
+        return { kind: 'banned', httpStatus: s, code, retryAfter, retry: false }
+    }
+    if (s === 403) {
+        return { kind: 'blocked', httpStatus: s, code, retryAfter, retry: true }
+    }
+    if (s === 400) {
+        return { kind: 'badRequest', httpStatus: s, code, retryAfter, retry: false }
+    }
+    return { kind: 'httpError', httpStatus: s, code, retryAfter, retry: s >= 500 }
+}
+
+
+/**
+ * 以重試取得一段K線之回應(內部使用)。
+ * 第i次重試前等待timeRetry*3^(i-1)毫秒(不超過timeRetryMax)；429附Retry-After者改等其值，超過timeRetryMax則不再重試。
+ * 418(IP封鎖)、429而不再重試(超過上限或用盡重試)、或403(防火牆封鎖)用盡重試時於ctx.halted標記，令呼叫端停止送出本次執行之後續請求(續送會延長封鎖)。
+ * 2xx回應之後等待100毫秒(同既有之頻率節制)；ctx.reachable於取得任何2xx陣列回應時設為true(同一K線端點於本次執行有正常回答，供呼叫端判定錯誤回應是否算有效觀察)。
+ *
+ * @async
+ * @function requestKlines
+ * @param {String} endpoint - K線端點
+ * @param {Object} params - 查詢參數
+ * @param {Object} fo - getFetchOpts之回傳
+ * @param {Object} [ctx={}] - 本次執行之狀態 { reachable, halted, haltKind }
+ * @param {Object} [hooks={}] - { onAttempt(response, c), log(msg) }，onAttempt於每次請求後呼叫
+ * @returns {Promise} resolve回傳 { kind, httpStatus, code, attempts, response, data }，kind見classifyResult，data於kind為'ok'時為回應陣列，否則為null
+ */
+let requestKlines = async (endpoint, params, fo, ctx = {}, hooks = {}) => {
+    let attempts = 0
+    let c = null
+    let rr = null
+    let i = 0
+    while (true) {
+        rr = await requestOnce(endpoint, params, fo.timeRequest)
+        attempts++
+        c = classifyResult(rr)
+        if (c.kind === 'ok') {
+            ctx.reachable = true
+        }
+        if (hooks.onAttempt) {
+            hooks.onAttempt(rr.response, c)
+        }
+        if (rr.response && rr.response.status >= 200 && rr.response.status < 300) {
+            await delay(100) //幣安limit: 2400 requests per minute
+        }
+        if (c.kind === 'ok') {
+            break
+        }
+        if (c.kind === 'banned') {
+            ctx.halted = true
+            ctx.haltKind = c.kind
+            break
+        }
+        if (!c.retry) {
+            break
+        }
+        if (c.kind === 'rateLimited' && c.retryAfter !== null && c.retryAfter > fo.timeRetryMax) {
+            ctx.halted = true
+            ctx.haltKind = c.kind
+            break
+        }
+        if (i >= fo.retryTimes) {
+            if (c.kind === 'rateLimited' || c.kind === 'blocked') {
+                ctx.halted = true
+                ctx.haltKind = c.kind
+            }
+            break
+        }
+        i++
+        let w = Math.min(fo.timeRetry * (3 ** (i - 1)), fo.timeRetryMax)
+        if (c.kind === 'rateLimited' && c.retryAfter !== null) {
+            w = c.retryAfter
+        }
+        if (hooks.log) {
+            hooks.log(`retry ${i}/${fo.retryTimes} after ${w}ms, kind[${c.kind}] status[${c.httpStatus}]`)
+        }
+        await timers.sleep(w)
+    }
+    return {
+        kind: c.kind,
+        httpStatus: c.httpStatus,
+        code: c.code,
+        attempts,
+        response: rr.response,
+        data: c.kind === 'ok' ? rr.response.data : null,
+    }
+}
+
+
+export { getFetchOpts, classifyResult, requestKlines }
+export default requestKlines

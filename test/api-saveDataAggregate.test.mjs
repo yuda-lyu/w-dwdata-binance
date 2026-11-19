@@ -9,6 +9,7 @@ import saveData from '../src/saveData.mjs'
 import syncData from '../src/syncData.mjs'
 import { getIntervalPlan } from '../src/intervals.mjs'
 import { install, setNow, uninstall } from './tools/fakeClock.mjs'
+import timers from '../src/timers.mjs'
 
 
 ot.extend(utc)
@@ -209,8 +210,12 @@ let supportsOffsetTz = () => {
 
 describe('api-saveDataAggregate', function() {
 
+    let sleepReal = timers.sleep
+
     before(async function() {
         install(T0)
+        //重試前之等待不真的等(只在請求失敗時發生)
+        timers.sleep = async () => {}
         fs.rmSync(fdRoot, { recursive: true, force: true })
         fs.mkdirSync(fdRoot, { recursive: true })
         server = http.createServer((req, res) => {
@@ -248,6 +253,7 @@ describe('api-saveDataAggregate', function() {
 
     after(async function() {
         uninstall()
+        timers.sleep = sleepReal
         await new Promise((resolve) => server.close(resolve))
         fs.rmSync(fdRoot, { recursive: true, force: true })
         //test/_tmp 已無其他測試之暫存時一併移除(並行之測試可能同時建立或移除, 不拋)
@@ -558,7 +564,8 @@ describe('api-saveDataAggregate', function() {
         try {
             let r = await run(name, 'price', '1day', { dayStart, timeZone: tz })
             let miss = r.aggregate.missing.filter((v) => v.reason !== 'open')
-            assert.deepStrictEqual(miss, [{ time: fmt(dGap), have: 2, need: 3, reason: 'gap' }])
+            //缺之基底根為暫無數據(有效觀察1次), 附成因
+            assert.deepStrictEqual(miss, [{ time: fmt(dGap), have: 2, need: 3, reason: 'gap', cause: 'pending', causes: { pending: 1, nodata: 0, unobserved: 0, unknown: 0 }, validCount: 1, firstValid: new Date(T0).toISOString() }])
             let rows0 = fs.readFileSync(`${r.aggregate.fd}/${ot.tz(t0, tz).format('YYYYMMDDHHmmss')}.csv`, 'utf8').split('\n')
             assert.strictEqual(rows0.length, 47)
             assert.ok(rows0.every((v) => v.slice(0, 19) !== fmt(dGap)))
@@ -619,8 +626,8 @@ describe('api-saveDataAggregate', function() {
         try {
             let r = await run('G10', 'price', '1day', { dayStart, timeZone: tz })
             let fmt = fmtOf(tz)
-            //第 5 天缺第 1 根(上市日當天)列為 gap, 前 4 天不列
-            assert.deepStrictEqual(r.aggregate.missing.filter((v) => v.reason !== 'open'), [{ time: fmt(t0 + 4 * D), have: 2, need: 3, reason: 'gap' }])
+            //第 5 天缺第 1 根(上市日當天)列為 gap(基底為暫無數據), 前 4 天(基底亦為暫無數據)不列
+            assert.deepStrictEqual(r.aggregate.missing.filter((v) => v.reason !== 'open'), [{ time: fmt(t0 + 4 * D), have: 2, need: 3, reason: 'gap', cause: 'pending', causes: { pending: 1, nodata: 0, unobserved: 0, unknown: 0 }, validCount: 1, firstValid: new Date(T0).toISOString() }])
             let rows = Object.values(readTree(r.aggregate.fd)).join('\n').split('\n')
             assert.strictEqual(rows[0].slice(0, 19), fmt(t0 + 5 * D))
         }

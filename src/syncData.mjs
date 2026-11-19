@@ -11,6 +11,8 @@ import isp0int from 'wsemi/src/isp0int.mjs'
 import cint from 'wsemi/src/cint.mjs'
 import saveData from './saveData.mjs'
 import { getIntervalPlan } from './intervals.mjs'
+import { getFetchOpts } from './requestKlines.mjs'
+import { getGapOpts } from './gaps.mjs'
 
 
 ot.extend(utc)
@@ -38,6 +40,14 @@ ot.extend(timezone)
  * @param {number} [opt.timeGrace=60000] - 名目收棒後之寬限毫秒數，透傳給 saveData，擷取時刻須不早於末根名目收棒加此值才視為定稿
  * @param {number} [opt.timeSyncInterval=60000] - 同步間隔時間（毫秒），預設 1 分鐘
  * @param {boolean} [opt.useShowLog=false] - 是否顯示同步執行與完成的 log
+ * @param {number} [opt.retryTimes=3] - 請求失敗後之重試次數，透傳給 saveData
+ * @param {number} [opt.timeRetry=1000] - 重試之間隔基數(毫秒)，透傳給 saveData
+ * @param {number} [opt.timeRetryMax=60000] - 每次等待之上限(毫秒)，透傳給 saveData
+ * @param {number} [opt.timeRequest=30000] - 單一請求之逾時(毫秒)，透傳給 saveData
+ * @param {number} [opt.netFailTimes=3] - 連續此數之分段皆為連線層失敗時停止該輪之後續請求，透傳給 saveData
+ * @param {number} [opt.noDataTimes=3] - 標註缺根所需之有效觀察次數，透傳給 saveData(每輪為一次執行)
+ * @param {number} [opt.timeNoData=604800000] - 標註缺根所需之首末有效觀察相隔(毫秒)，透傳給 saveData
+ * 上列新選項於建立時即檢測：noDataTimes與timeNoData決定何時永久標註為缺根(錯值會使資料靜默缺漏)，給了而無效即拋(未啟動計時器)，訊息依'invalid opt.<名稱>: must be <種類>'；retryTimes、timeRetry、timeRetryMax、timeRequest、netFailTimes為執行參數，給了而無效改用預設(不拋)；整數類接受數字字串並轉為數值(如'3'即3)，透傳給saveData者為轉換後之數值。useResetGaps不透傳(每輪皆重置會令紀錄無法累計，請改對saveData單次呼叫給之)
  * @returns {Object} 返回一個控制物件，包含：
  * @returns {Function} return.run 啟動同步任務
  * @returns {Function} return.stop 停止同步任務
@@ -131,6 +141,10 @@ let syncData = (name, type, endpoint, symbol, opt = {}) => {
     //check, 建立時即檢查週期鍵、取得方式與時區(無效即拋, 先於啟動任何計時器), 免得每輪皆於saveData失敗而只印錯誤
     getIntervalPlan(interval, { aggregateFrom, timeZone, dayStart })
 
+    //fo, go, 重試、逾時與標註缺根之選項, 建立時即檢測(noDataTimes與timeNoData給了而無效即拋, 其餘無效改用預設)後透傳給saveData; useResetGaps不透傳(每輪皆重置會令紀錄無法累計)
+    let fo = getFetchOpts(opt)
+    let go = getGapOpts(opt)
+
     let t = null
     let b = false
     let core = () => {
@@ -150,6 +164,13 @@ let syncData = (name, type, endpoint, symbol, opt = {}) => {
             proxy,
             useShowLog,
             aggregateFrom,
+            retryTimes: fo.retryTimes,
+            timeRetry: fo.timeRetry,
+            timeRetryMax: fo.timeRetryMax,
+            timeRequest: fo.timeRequest,
+            netFailTimes: fo.netFailTimes,
+            noDataTimes: go.noDataTimes,
+            timeNoData: go.timeNoData,
         })
             .then((res) => {
                 // console.log('res', res)

@@ -1,4 +1,5 @@
 import fs from 'fs'
+import path from 'path'
 import ot from 'dayjs'
 import utc from 'dayjs/plugin/utc.js'
 import timezone from 'dayjs/plugin/timezone.js'
@@ -12,6 +13,7 @@ import fsIsFile from 'wsemi/src/fsIsFile.mjs'
 import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
 import fsCreateFolder from 'wsemi/src/fsCreateFolder.mjs'
 import { getIntervals, ANCHOR_SEC } from './intervals.mjs'
+import { openGapStore } from './gaps.mjs'
 
 
 ot.extend(utc)
@@ -103,7 +105,7 @@ let mergeRows = (rows) => {
 /**
  * 將基底週期之分段檔合併為目標週期之分段檔，各根以timeZone(固定偏移)之界線起訖，供saveData於合併時使用。
  * 目標之分段同目標週期鍵之分段(自dayStart 00:00起每段hourInterval小時)；分段檔不存在、根數少於該段應有根數、為最新分段、或所需之基底分段檔之修改時間晚於該分段檔者重算，其餘沿用(以外部方式改動基底分段檔而未令其修改時間晚於合併分段檔者不會重算，刪除該合併分段檔即可強制重算)。
- * 某目標根之基底各根須齊全且皆已定稿(基底所在分段檔之修改時間不早於該基底根之名目收棒加寬限)，否則不輸出該根並記入missing：reason為'open'(目標根尚未收棒加寬限)、'gap'(基底根缺漏)、'invalidBase'(基底根之數值欄無法解析)或'notFinal'(基底根擷取於其收棒前)；早於最早一根基底資料之目標根不列入。
+ * 某目標根之基底各根須齊全且皆已定稿(基底所在分段檔之修改時間不早於該基底根之名目收棒加寬限)，否則不輸出該根並記入missing：reason為'open'(目標根尚未收棒加寬限)、'gap'(基底根缺漏)、'invalidBase'(基底根之數值欄無法解析)或'notFinal'(基底根擷取於其收棒前)；早於最早一根基底資料之目標根不列入(上市前)，但缺之基底根所在之分段本次請求失敗者列入(不能當成上市前；該失敗為有效觀察而已有紀錄者亦然)。
  *
  * @function aggregateData
  * @param {Object} opt - 設定參數
@@ -113,12 +115,17 @@ let mergeRows = (rows) => {
  * @param {String} opt.timeZone - 時區
  * @param {String} opt.dayStart - 抓取起始日
  * @param {Integer} opt.timeGrace - 名目收棒後之寬限毫秒數
+ * @param {Array} [opt.failedBase=[]] - 本次請求失敗之基底分段(tag)，其缺之根之成因為'unobserved'
+ * @param {Object} [opt.gapStore] - 基底資料夾之紀錄(openGapStore之回傳；saveData已讀入者，不重讀)，未給時於第一次需要才讀基底資料夾之紀錄檔'_gaps.json'
  * @param {Boolean} [opt.useShowLog=false] - 是否顯示log
- * @returns {Object} 回傳物件 { segments, missing, timeLast, timeKeep }，segments為本次重算之分段 [{ tag, n }]，missing為未輸出之目標根 [{ time, have, need, reason }]，timeLast與timeKeep為最新兩根已輸出目標根之開始時間(無則undefined)
+ * @returns {Object} 回傳物件 { segments, missing, timeLast, timeKeep }，segments為本次重算之分段 [{ tag, n }]，missing為未輸出之目標根 [{ time, have, need, reason }]，reason為'gap'者於缺之基底根有紀錄或其分段本次失敗時另含 cause、causes(各成因之根數)與(含暫無數據者)validCount、firstValid，成因依基底資料夾之紀錄檔('_gaps.json')與failedBase判定(最嚴者：'unobserved' > 'unknown' > 'pending' > 'nodata')，全為'unknown'時不附；早於最早一根基底資料之目標根不列入，但缺之基底根所在之分段於failedBase者列入；timeLast與timeKeep為最新兩根已輸出目標根之開始時間(無則undefined)
  */
 let aggregateData = (opt) => {
     let { fdBase, fdAgg, plan, timeZone, dayStart, timeGrace } = opt
     let useShowLog = get(opt, 'useShowLog') === true
+
+    //failedBase, 本次請求失敗之基底分段(tag)
+    let failedBase = get(opt, 'failedBase', [])
 
     let kp = getIntervals()
     let kT = kp[plan.interval]
@@ -158,8 +165,8 @@ let aggregateData = (opt) => {
         if (cache.has(j)) {
             return cache.get(j)
         }
-        let r = { exists: false, mtimeMs: 0, rows: new Map() }
         let fp = fpBase(j)
+        let r = { exists: false, mtimeMs: 0, rows: new Map(), fp }
         if (fsIsFile(fp)) {
             r.exists = true
             r.mtimeMs = fs.statSync(fp).mtimeMs
@@ -174,6 +181,30 @@ let aggregateData = (opt) => {
         return r
     }
     let jOf = (ms) => Math.floor((ms - t0) / LB)
+
+    //failedJ, 本次請求失敗之基底分段之序號(tag換為序號)
+    let failedJ = new Set(map(failedBase, (tag) => jOf(parseTime(`${tag.slice(0, 4)}-${tag.slice(4, 6)}-${tag.slice(6, 8)}T${tag.slice(8, 10)}:${tag.slice(10, 12)}:${tag.slice(12, 14)}`))))
+
+    //causeOf, 缺之基底根之成因: 有紀錄者為其狀態('pending'暫無數據、'nodata'已標註缺根), 否則其分段本次請求失敗者為'unobserved', 其餘為'unknown'(尚未嘗試)
+    let gapStore = get(opt, 'gapStore', null) //基底資料夾之紀錄(saveData已讀入者); 未給時於第一次需要才讀基底資料夾之紀錄檔(每資料夾一個'_gaps.json')
+    let causeOf = (ob) => {
+        if (gapStore === null) {
+            gapStore = openGapStore(fdBase, { interval: plan.base, timeZone })
+        }
+        let j = jOf(ob)
+        let tag = path.basename(loadBase(j).fp, '.csv') //loadBase已於取該根時載入(快取), 不另換算時間
+        let rec = gapStore.recAt(tag, ob)
+        if (rec) {
+            return { cause: rec.state === 'nodata' ? 'nodata' : 'pending', rec }
+        }
+        if (failedJ.has(j)) {
+            return { cause: 'unobserved', rec: null }
+        }
+        return { cause: 'unknown', rec: null }
+    }
+
+    //CAUSE_RANK, 一根目標含多種成因時取最嚴者
+    let CAUSE_RANK = ['unobserved', 'unknown', 'pending', 'nodata']
 
     //readAgg, 讀既有之合併分段檔各列
     let readAgg = (fp) => {
@@ -238,6 +269,7 @@ let aggregateData = (opt) => {
                 break
             }
             let bs = []
+            let lacks = []
             let final = true
             let valid = true
             for (let i = 0; i < count; i++) {
@@ -245,6 +277,7 @@ let aggregateData = (opt) => {
                 let fb = loadBase(jOf(ob))
                 let r = fb.rows.get(ob)
                 if (!r) {
+                    lacks.push(ob)
                     continue
                 }
                 bs.push(r)
@@ -264,9 +297,6 @@ let aggregateData = (opt) => {
                 rows.push(join(mergeRows(bs), ', '))
                 continue
             }
-            if (!seen) {
-                continue
-            }
             let reason = ''
             if (o + t + timeGrace > now) {
                 reason = 'open'
@@ -280,11 +310,47 @@ let aggregateData = (opt) => {
             else {
                 reason = 'notFinal'
             }
+            let m = {}
+            let failedLead = false
+
+            //gap, 附缺之基底根之成因: cause為最嚴者, causes為各成因之根數, 含暫無數據者另附其最少之有效觀察次數與最早之首次有效觀察時刻; 缺之基底根全為unknown(無紀錄且本次未失敗, 例: 留待下次之段、分段檔殘缺)時不附(同既有)
+            if (reason === 'gap') {
+                failedLead = lacks.some((ob) => failedJ.has(jOf(ob)))
+                let causes = { pending: 0, nodata: 0, unobserved: 0, unknown: 0 }
+                let cause = 'nodata'
+                let validCount = null
+                let firstValid = null
+                for (let ob of lacks) {
+                    let c = causeOf(ob)
+                    causes[c.cause]++
+                    if (CAUSE_RANK.indexOf(c.cause) < CAUSE_RANK.indexOf(cause)) {
+                        cause = c.cause
+                    }
+                    if (c.cause === 'pending') {
+                        validCount = validCount === null ? c.rec.validCount : Math.min(validCount, c.rec.validCount)
+                        firstValid = firstValid === null ? c.rec.firstValid : Math.min(firstValid, c.rec.firstValid)
+                    }
+                }
+                if (causes.unknown < lacks.length) {
+                    m.cause = cause
+                    m.causes = causes
+                    if (causes.pending > 0) {
+                        m.validCount = validCount
+                        m.firstValid = new Date(firstValid).toISOString()
+                    }
+                }
+            }
+
+            //check, 早於最早一根基底資料之目標根不列入(上市前), 但缺之基底根所在之分段本次請求失敗者列入(不能當成上市前; 失敗為有效觀察而已有紀錄者亦然)
+            if (!seen && !failedLead) {
+                continue
+            }
             missing.push({
                 time: fmt(o),
                 have: bs.length,
                 need: count,
                 reason,
+                ...m,
             })
         }
 

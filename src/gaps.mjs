@@ -1,0 +1,636 @@
+import fs from 'fs'
+import path from 'path'
+import ot from 'dayjs'
+import utc from 'dayjs/plugin/utc.js'
+import timezone from 'dayjs/plugin/timezone.js'
+import get from 'lodash-es/get.js'
+import map from 'lodash-es/map.js'
+import split from 'lodash-es/split.js'
+import trim from 'lodash-es/trim.js'
+import sep from 'wsemi/src/sep.mjs'
+import isestr from 'wsemi/src/isestr.mjs'
+import fsIsFile from 'wsemi/src/fsIsFile.mjs'
+import { getIntervals, ANCHOR_SEC } from './intervals.mjs'
+import readIntOpt from './opts.mjs'
+
+
+ot.extend(utc)
+ot.extend(timezone)
+
+
+let mod = (x, m) => ((x % m) + m) % m
+
+//hasOwn, 只認物件自有之鍵
+let hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k)
+
+//GAP_INT_OPTS, 標註之整數選項: [名稱, 預設, iseint之範圍, 種類描述]; 決定何時永久標註為缺根(之後不再抓), 錯值會使資料靜默缺漏, 故給了而無效即拋(不改用預設)
+let GAP_INT_OPTS = [
+    ['noDataTimes', 3, { min: 1 }, 'a positive integer'],
+    ['timeNoData', 7 * 24 * 60 * 60 * 1000, { min: 0 }, 'a non-negative integer'],
+]
+
+
+/**
+ * 取得標註缺根之選項。noDataTimes與timeNoData決定何時永久標註為缺根(之後不再抓)：undefined與null視為未給(用預設)，給了而無效(非整數、Infinity、'0x10'、不在範圍內等)即拋錯，訊息依'invalid opt.<名稱>: must be <種類>'且不帶輸入值；整數類接受數字字串並轉為數值(如'3'即3)，其後一律使用轉換值。useResetGaps只有true為啟用，其餘一律視為未給(不拋)。
+ *
+ * @function getGapOpts
+ * @param {Object} [opt={}] - 設定參數
+ * @param {Integer} [opt.noDataTimes=3] - 標註缺根所需之有效觀察次數(正整數；每次執行每根至多1次)
+ * @param {Integer} [opt.timeNoData=604800000] - 標註缺根所需之首次至最近一次有效觀察之相隔毫秒數(非負整數，預設7天)
+ * @param {Boolean} [opt.useResetGaps=false] - 是否於本次執行先刪除期間內各分段之紀錄(手動重置)，只有true為啟用
+ * @returns {Object} 回傳物件 { noDataTimes, timeNoData, useResetGaps }
+ */
+let getGapOpts = (opt = {}) => {
+    let r = {}
+    for (let [k, def, spec, text] of GAP_INT_OPTS) {
+        let o = readIntOpt(opt, k, spec)
+        if (o.state === 'invalid') {
+            throw new Error(`invalid opt.${k}: must be ${text}`)
+        }
+        r[k] = o.state === 'ok' ? o.value : def
+    }
+    r.useResetGaps = get(opt, 'useResetGaps') === true
+    return r
+}
+
+
+/**
+ * 原生格線上之各根開盤時刻(毫秒)：[startMs, endMs]內、週期秒數之整數倍(1week另加4天之錨點)者，與交易所之UTC格線相同。
+ *
+ * @function gridOpens
+ * @param {Number} startMs - 起點(含)
+ * @param {Number} endMs - 終點(含)
+ * @param {String} interval - 週期鍵
+ * @returns {Array} 回傳開盤毫秒之陣列(遞增)
+ */
+let gridOpens = (startMs, endMs, interval) => {
+    let step = getIntervals()[interval].dataSec * 1000
+    let anchor = get(ANCHOR_SEC, interval, 0) * 1000
+    let rs = []
+    for (let o = startMs + mod(anchor - startMs, step); o <= endMs; o += step) {
+        rs.push(o)
+    }
+    return rs
+}
+
+
+//GAP_FILE, 紀錄檔之檔名: 每個資料夾一個, 與分段CSV同夾(分段只讀'.csv', 此檔與其暫存檔'_gaps.json.<pid>.tmp'皆不會被當成分段)
+let GAP_FILE = '_gaps.json'
+
+//fpGapsOf, 資料夾之紀錄檔路徑
+let fpGapsOf = (fd) => path.join(fd, GAP_FILE)
+
+//reTag, 分段之tag(分段起點之YYYYMMDDHHmmss)
+let reTag = /^\d{14}$/
+
+//REC_KEYS, 每根紀錄之欄位(firstValid、lastValid、markedAt於記憶體為毫秒, 檔內為ISO字串)
+let REC_KEYS = ['state', 'validCount', 'firstValid', 'lastValid', 'lastKind', 'lastHttpStatus', 'lastCode', 'uncounted', 'lastUncountedKind', 'markedAt']
+let TIME_KEYS = ['firstValid', 'lastValid', 'markedAt']
+
+let toIso = (ms) => (ms === null ? null : new Date(ms).toISOString())
+let fromIso = (s) => (s === null ? null : Date.parse(s))
+
+
+//LIMIT_COUNT, 次數欄之合理上限
+let LIMIT_COUNT = 1e9
+
+//LIMIT_BYTES, 紀錄檔大小之上限。每資料夾一個紀錄檔，大小隨該資料夾內有缺根之分段數增加：每個範圍約300～350位元組，連續且紀錄相同之根合併為一個範圍(同一分段內)，故每個有缺根之分段至少一個範圍，最壞為整段皆缺。
+//實際之最大值為最小週期('1m'每段1小時)自幣安開站(2017)至今約8萬個分段全為暫無數據或已標註(例如上市前之整段，每段一個範圍)，約27MB；上限取其2倍餘(64MiB)，使合法之紀錄檔不致被拒而丟失累計(丟失即須重新觀察至少7天)，同時令損毀或惡意之巨檔不被讀入記憶體。
+let LIMIT_BYTES = 64 * 1024 * 1024
+
+//MIN_RANGE_BYTES, 一個合法範圍之最少位元組數(各欄位名稱與值), 讀入前以大括號之數量先擋下以大量空物件灌滿之巨檔(JSON.parse前即不合格, 免得建出數千萬個物件耗盡記憶體)
+let MIN_RANGE_BYTES = 150
+
+//DST_SLACK, 分段之請求起訖(自分段起點起, 名目長度為每段時數)之容許餘裕(毫秒): 有日光節約之時區之直接下載, 分段起訖為線性之牆鐘字串, 跨日光節約回撥之分段實際比名目長1小時(跨春進者短1小時), 故上界給2小時餘裕(偏移之變動不超過此值)
+let DST_SLACK = 2 * 3600 * 1000
+
+//STATES, LAST_KINDS, 狀態與最近一次有效觀察之種類
+let STATES = ['pending', 'nodata']
+let LAST_KINDS = ['missing', 'httpError']
+
+let isCount = (v, min) => Number.isSafeInteger(v) && v >= min && v <= LIMIT_COUNT
+let isTimeStr = (v) => typeof v === 'string' && Number.isFinite(Date.parse(v))
+let isShortStr = (v) => typeof v === 'string' && v.length > 0 && v.length <= 64
+
+//checkRange, 逐範圍檢查欄位(狀態、次數、時刻、最近一次之種類與代碼), 合格回傳true
+let checkRange = (rg) => {
+    if (STATES.indexOf(get(rg, 'state')) < 0) {
+        return false
+    }
+    if (!isCount(get(rg, 'validCount'), 1) || !isCount(get(rg, 'uncounted'), 0)) {
+        return false
+    }
+    if (!isTimeStr(get(rg, 'firstValid')) || !isTimeStr(get(rg, 'lastValid'))) {
+        return false
+    }
+    let markedAt = get(rg, 'markedAt', null)
+    if (rg.state === 'nodata' ? !isTimeStr(markedAt) : markedAt !== null) {
+        return false
+    }
+    if (LAST_KINDS.indexOf(get(rg, 'lastKind')) < 0) {
+        return false
+    }
+    let st = get(rg, 'lastHttpStatus', null)
+    if (st !== null && !(Number.isSafeInteger(st) && st >= 100 && st <= 599)) {
+        return false
+    }
+    let code = get(rg, 'lastCode', null)
+    if (code !== null && !Number.isSafeInteger(code) && !isShortStr(code)) {
+        return false
+    }
+    let uk = get(rg, 'lastUncountedKind', null)
+    if (uk !== null && !isShortStr(uk)) {
+        return false
+    }
+    return true
+}
+
+
+//parseTag, 分段tag(YYYYMMDDHHmmss)轉為該時區之毫秒
+let parseTag = (tag, timeZone) => ot.tz(`${tag.slice(0, 4)}-${tag.slice(4, 6)}-${tag.slice(6, 8)}T${tag.slice(8, 10)}:${tag.slice(10, 12)}:${tag.slice(12, 14)}`, timeZone).valueOf()
+
+
+/**
+ * 讀並檢查某資料夾之紀錄檔(內部使用)。逐範圍檢查：檔頭(v為1、週期鍵、時區)；狀態；次數(正整數或非負整數且不超過上限)；時刻可解析(已標註者之markedAt亦然，暫無數據者為null)；tag為14位數字；自from起之n根皆於原生格線上且於該tag分段之請求起訖內(以算術判定，n過大即不合格而不逐根展開；有日光節約之時區之直接下載，分段起訖可比名目長度多1小時，故容許2小時餘裕)；to與from、n一致；全檔各範圍之根不重疊。檔案大小不得超過LIMIT_BYTES。
+ * 檔案超過LIMIT_BYTES、或大括號之數量遠多於合法範圍之可能數量(以空物件灌滿之巨檔)者，於JSON.parse前即不合格。
+ * 任何一項不合格(含給了expect而週期鍵或時區不符)即整檔視為無紀錄(回傳null；不拋錯、不提早標註；下次更新時以正確內容覆蓋或刪除)。
+ *
+ * @function parseGapFile
+ * @param {String} fp - 紀錄檔路徑
+ * @param {Object} [expect=null] - { interval, timeZone }，給了則檔頭之週期鍵與時區須相符
+ * @returns {Object|null} 回傳 { j, byTag }(j為檔頭，byTag為Map(tag -> 依起點排序之 [{ rg, o0 }])，rg為經正規化之範圍物件，o0為起點毫秒)，不存在或不合格時為null
+ */
+let parseGapFile = (fp, expect = null) => {
+    let j = null
+    try {
+        if (!fsIsFile(fp) || fs.statSync(fp).size > LIMIT_BYTES) {
+            return null
+        }
+        let text = fs.readFileSync(fp, 'utf8')
+
+        //大括號之數量(檔頭一個加各範圍各一個)遠多於合法範圍之可能數量者不合格
+        let nBrace = 0
+        for (let i = text.indexOf('{'); i >= 0; i = text.indexOf('{', i + 1)) {
+            nBrace++
+        }
+        if (nBrace > text.length / MIN_RANGE_BYTES + 8) {
+            return null
+        }
+
+        j = JSON.parse(text)
+    }
+    catch (err) {
+        return null
+    }
+    let kp = getIntervals()
+    if (get(j, 'v') !== 1 || typeof get(j, 'interval') !== 'string' || !hasOwn(kp, j.interval) || !isestr(get(j, 'timeZone')) || !Array.isArray(get(j, 'ranges')) || j.ranges.length === 0) {
+        return null
+    }
+    if (expect && (j.interval !== expect.interval || j.timeZone !== expect.timeZone)) {
+        return null
+    }
+    let byTag = new Map()
+    try {
+        let anchor = get(ANCHOR_SEC, j.interval, 0) * 1000
+        let step = kp[j.interval].dataSec * 1000
+        let span = kp[j.interval].hourInterval * 3600 * 1000 - 1000 + DST_SLACK //分段之請求起訖(含終點)加日光節約之餘裕
+        let segs = new Map() //tag -> 分段起點毫秒
+        let iv = [] //各範圍之 [起點, 終點], 供檢查全檔不重疊
+        for (let rg of j.ranges) {
+            let tag = get(rg, 'tag')
+            if (!checkRange(rg) || typeof tag !== 'string' || !reTag.test(tag) || typeof rg.from !== 'string' || typeof rg.to !== 'string') {
+                return null
+            }
+            let n = rg.n
+            if (!Number.isSafeInteger(n) || n < 1) {
+                return null
+            }
+            if (!segs.has(tag)) {
+                segs.set(tag, parseTag(tag, j.timeZone))
+            }
+            let s0 = segs.get(tag)
+            if (!Number.isFinite(s0)) {
+                return null
+            }
+            let o0 = ot.tz(rg.from, j.timeZone).valueOf()
+            if (!Number.isFinite(o0)) {
+                return null
+            }
+            let o1 = o0 + (n - 1) * step
+            //各根於原生格線上(與錨點相差整數個週期)且於該分段之請求起訖內
+            if (mod(o0 - anchor, step) !== 0 || o0 < s0 || o1 > s0 + span) {
+                return null
+            }
+            //to與from、n一致(n為1而to與from為同一字串者不必再解析)
+            if (!(n === 1 && rg.to === rg.from) && ot.tz(rg.to, j.timeZone).valueOf() !== o1) {
+                return null
+            }
+            iv.push([o0, o1])
+            let c = { tag, from: rg.from, to: rg.to, n }
+            for (let k of REC_KEYS) {
+                c[k] = get(rg, k, null)
+            }
+            if (!byTag.has(tag)) {
+                byTag.set(tag, [])
+            }
+            byTag.get(tag).push({ rg: c, o0 })
+        }
+        iv.sort((a, b) => a[0] - b[0])
+        for (let i = 1; i < iv.length; i++) {
+            if (iv[i][0] <= iv[i - 1][1]) {
+                return null
+            }
+        }
+        for (let es of byTag.values()) {
+            es.sort((a, b) => a.o0 - b.o0)
+        }
+    }
+    catch (err) {
+        return null
+    }
+    return { j, byTag }
+}
+
+
+let sameRec = (a, b) => {
+    for (let k of REC_KEYS) {
+        if (a[k] !== b[k]) {
+            return false
+        }
+    }
+    return true
+}
+
+
+/**
+ * 開啟某資料夾之紀錄(內部使用，供saveData與aggregateData)。紀錄檔每個資料夾一個('_gaps.json')，本函數只讀檔一次(不存在時不讀)；各分段之紀錄依tag保存為範圍，只在需要逐根更新之分段才展開為逐根(barsOf)，其餘分段之範圍原樣保留(不展開、不重新換算時間字串)。
+ * 讀取時之檢查見parseGapFile；不合格者整檔視為無紀錄(invalid為true)，於save時以正確內容覆蓋(無紀錄則刪除)。
+ * 有變動才寫(save)：先寫暫存檔(名稱不符紀錄檔之格式，不會被當成紀錄或分段)再改名，讀者不會讀到寫一半之檔；無任何'pending'與'nodata'之根時刪除紀錄檔(不存在則不動)。
+ *
+ * @function openGapStore
+ * @param {String} fd - 資料夾(與分段CSV同夾)
+ * @param {Object} meta - { interval, timeZone }，紀錄之週期鍵與時區(分段tag以此時區解讀；既有紀錄檔之檔頭與此不符者視為無紀錄)
+ * @returns {Object} 回傳紀錄物件：invalid(既有紀錄檔不合格)、has(tag)、summary(tag)、recAt(tag, open)、barsOf(tag)、touch(tag)、resetTags(tags)、list(tags)、save()
+ */
+let openGapStore = (fd, meta) => {
+    let fp = fpGapsOf(fd)
+    let { interval, timeZone } = meta
+    let step = getIntervals()[interval].dataSec * 1000
+    let byTag = new Map() //tag -> [{ rg, o0 }]
+    let invalid = false
+    let memo = new Map() //開盤毫秒 -> 時間字串(沿用檔內已有者, 免得每次重新換算)
+    if (fsIsFile(fp)) {
+        let p = parseGapFile(fp, meta)
+        if (p === null) {
+            invalid = true
+        }
+        else {
+            byTag = p.byTag
+            for (let es of byTag.values()) {
+                for (let e of es) {
+                    memo.set(e.o0, e.rg.from)
+                    memo.set(e.o0 + (e.rg.n - 1) * step, e.rg.to)
+                }
+            }
+        }
+    }
+    let bars = new Map() //tag -> Map(開盤毫秒 -> 紀錄), 只含已展開之分段
+    let dirty = new Set() //已更動而須重建範圍之tag
+    let needWrite = false
+
+    let fmt = (ms) => {
+        if (!memo.has(ms)) {
+            memo.set(ms, ot.tz(ms, timeZone).format('YYYY-MM-DDTHH:mm:ss'))
+        }
+        return memo.get(ms)
+    }
+
+    //recOf, 範圍之紀錄(時間欄換為毫秒)
+    let recOf = (rg) => {
+        let rec = {}
+        for (let k of REC_KEYS) {
+            rec[k] = TIME_KEYS.indexOf(k) >= 0 ? fromIso(rg[k]) : rg[k]
+        }
+        return rec
+    }
+
+    //build, 由逐根重建某分段之範圍: 連續且紀錄相同之根合併為一個範圍
+    let build = (map1) => {
+        let os = [...map1.keys()].sort((a, b) => a - b)
+        let es = []
+        let cur = null
+        for (let o of os) {
+            let rec = map1.get(o)
+            if (cur && o === cur.last + step && sameRec(cur.rec, rec)) {
+                cur.last = o
+                cur.n++
+                continue
+            }
+            cur = { first: o, last: o, n: 1, rec }
+            es.push(cur)
+        }
+        return es
+    }
+
+    //commit, 將已更動之分段重建為範圍(無紀錄之分段移除)
+    let commit = () => {
+        for (let tag of dirty) {
+            let m = bars.get(tag)
+            if (!m) {
+                continue
+            }
+            let cs = build(m)
+            if (cs.length === 0) {
+                byTag.delete(tag)
+                continue
+            }
+            byTag.set(tag, map(cs, (c) => {
+                let rg = {
+                    tag,
+                    from: fmt(c.first),
+                    to: fmt(c.last),
+                    n: c.n,
+                }
+                for (let k of REC_KEYS) {
+                    rg[k] = TIME_KEYS.indexOf(k) >= 0 ? toIso(c.rec[k]) : c.rec[k]
+                }
+                return { rg, o0: c.first }
+            }))
+        }
+        dirty.clear()
+    }
+
+    let store = {
+        invalid: () => invalid,
+
+        //has, 該分段是否有紀錄
+        has: (tag) => (bars.has(tag) ? bars.get(tag).size > 0 : byTag.has(tag)),
+
+        //summary, 該分段之紀錄概況: pending為是否有暫無數據之根, noData為已標註缺根之根數; 無紀錄回傳null
+        summary: (tag) => {
+            if (!store.has(tag)) {
+                return null
+            }
+            let pending = false
+            let noData = 0
+            if (bars.has(tag)) {
+                for (let rec of bars.get(tag).values()) {
+                    if (rec.state === 'nodata') {
+                        noData++
+                    }
+                    else {
+                        pending = true
+                    }
+                }
+            }
+            else {
+                for (let e of byTag.get(tag)) {
+                    if (e.rg.state === 'nodata') {
+                        noData += e.rg.n
+                    }
+                    else {
+                        pending = true
+                    }
+                }
+            }
+            return { pending, noData }
+        },
+
+        //recAt, 某根之紀錄(時間欄為毫秒), 無紀錄為undefined; 不展開分段
+        recAt: (tag, open) => {
+            if (bars.has(tag)) {
+                return bars.get(tag).get(open)
+            }
+            for (let e of byTag.get(tag) || []) {
+                if (open >= e.o0 && open <= e.o0 + (e.rg.n - 1) * step && mod(open - e.o0, step) === 0) {
+                    return recOf(e.rg)
+                }
+            }
+            return undefined
+        },
+
+        //barsOf, 某分段之逐根紀錄(Map, 開盤毫秒 -> 紀錄): 首次取用時由範圍展開, 無紀錄者為空Map; 就地修改後須呼叫touch
+        barsOf: (tag) => {
+            if (!bars.has(tag)) {
+                let m = new Map()
+                for (let e of byTag.get(tag) || []) {
+                    let rec = recOf(e.rg)
+                    for (let i = 0; i < e.rg.n; i++) {
+                        m.set(e.o0 + i * step, { ...rec })
+                    }
+                }
+                bars.set(tag, m)
+            }
+            return bars.get(tag)
+        },
+
+        //touch, 標記某分段已更動(下次save時重建範圍並寫檔)
+        touch: (tag) => {
+            dirty.add(tag)
+            needWrite = true
+        },
+
+        //resetTags, 刪除各tag之全部紀錄(手動重置), 回傳被刪之分段數
+        resetTags: (tags) => {
+            let n = 0
+            for (let tag of tags) {
+                if (byTag.has(tag) || bars.has(tag)) {
+                    if (byTag.has(tag)) {
+                        n++
+                    }
+                    byTag.delete(tag)
+                    bars.delete(tag)
+                    dirty.delete(tag)
+                }
+            }
+            if (n > 0) {
+                needWrite = true
+            }
+            return n
+        },
+
+        //list, 各範圍(依tag與起點排序), tags給了則只列這些分段; 元素為 { tag, from, to, n, state, validCount, firstValid, lastValid, lastKind, lastHttpStatus, lastCode, uncounted, lastUncountedKind, markedAt }
+        list: (tags) => {
+            commit()
+            let rs = []
+            for (let tag of [...byTag.keys()].sort()) {
+                if (tags && !tags.has(tag)) {
+                    continue
+                }
+                for (let e of byTag.get(tag)) {
+                    rs.push({ ...e.rg })
+                }
+            }
+            return rs
+        },
+
+        //save, 有變動(或既有紀錄檔不合格)才寫; 無任何紀錄時刪除紀錄檔; 回傳是否有寫檔或刪檔
+        save: () => {
+            commit()
+            if (!needWrite && !invalid) {
+                return false
+            }
+            let es = []
+            for (let tag of [...byTag.keys()].sort()) {
+                es.push(...byTag.get(tag))
+            }
+            if (es.length === 0) {
+                if (fsIsFile(fp)) {
+                    fs.unlinkSync(fp)
+                }
+            }
+            else {
+                let lines = map(es, (e) => `    ${JSON.stringify(e.rg)}`)
+                let text = `{\n  "v": 1,\n  "interval": ${JSON.stringify(interval)},\n  "timeZone": ${JSON.stringify(timeZone)},\n  "ranges": [\n${lines.join(',\n')}\n  ]\n}`
+                //原子寫入: 先寫暫存檔(名稱不符紀錄檔之格式, 不會被當成紀錄或分段)再改名, 讀者不會讀到寫一半之檔
+                let fpTmp = `${fp}.${process.pid}.tmp`
+                try {
+                    fs.writeFileSync(fpTmp, text, 'utf8')
+                    fs.renameSync(fpTmp, fp)
+                }
+                catch (err) {
+                    if (fsIsFile(fpTmp)) {
+                        fs.unlinkSync(fpTmp)
+                    }
+                    throw err
+                }
+            }
+            needWrite = false
+            invalid = false
+            return true
+        },
+    }
+
+    return store
+}
+
+
+/**
+ * 依一次嘗試更新某分段各根之紀錄(就地修改bars)。
+ * have內之根清除紀錄(取得數據即清零，含已標註者)；expected內而不在have者：本次為有效觀察時累計(已標註者不變)並判定標註，不算觀察時只累計既有紀錄之uncounted(無紀錄者不新增)。
+ * 標註之條件(於有效觀察之當下判定)：有效觀察次數不少於noDataTimes，且首次與最近一次有效觀察相隔不少於timeNoData。
+ *
+ * @function applyAttempt
+ * @param {Map} bars - 開盤毫秒 -> 紀錄
+ * @param {Object} a - { expected(已收棒加寬限之應有各根), have(Set, 已取得之各根), counted, kind, httpStatus, code, tObs }
+ * @param {Object} go - getGapOpts之回傳
+ * @returns {Boolean} 回傳是否有改變
+ */
+let applyAttempt = (bars, a, go) => {
+    let changed = false
+    for (let o of a.have) {
+        if (bars.has(o)) {
+            bars.delete(o)
+            changed = true
+        }
+    }
+    for (let o of a.expected) {
+        if (a.have.has(o)) {
+            continue
+        }
+        let rec = bars.get(o)
+        if (!a.counted) {
+            if (rec && rec.state === 'pending') {
+                rec.uncounted++
+                rec.lastUncountedKind = a.kind
+                changed = true
+            }
+            continue
+        }
+        if (rec && rec.state === 'nodata') {
+            continue
+        }
+        if (!rec) {
+            rec = {
+                state: 'pending',
+                validCount: 0,
+                firstValid: a.tObs,
+                lastValid: a.tObs,
+                lastKind: null,
+                lastHttpStatus: null,
+                lastCode: null,
+                uncounted: 0,
+                lastUncountedKind: null,
+                markedAt: null,
+            }
+            bars.set(o, rec)
+        }
+        rec.validCount++
+        rec.lastValid = a.tObs
+        rec.lastKind = a.kind === 'ok' ? 'missing' : 'httpError'
+        rec.lastHttpStatus = a.httpStatus
+        rec.lastCode = a.code
+        if (rec.validCount >= go.noDataTimes && rec.lastValid - rec.firstValid >= go.timeNoData) {
+            rec.state = 'nodata'
+            rec.markedAt = a.tObs
+        }
+        changed = true
+    }
+    return changed
+}
+
+
+//readCsvOpens, 分段檔各列之開盤毫秒(不存在時為空)
+let readCsvOpens = (fp, timeZone) => {
+    let s = new Set()
+    if (!fsIsFile(fp)) {
+        return s
+    }
+    for (let line of sep(fs.readFileSync(fp, 'utf8'), '\n')) {
+        let t = trim(get(split(line, ','), 0, ''))
+        let ms = ot.tz(t, timeZone).valueOf()
+        if (Number.isFinite(ms)) {
+            s.add(ms)
+        }
+    }
+    return s
+}
+
+
+/**
+ * 讀取某資料夾之暫無數據('pending')與已標註缺根('nodata')之各根(讀該資料夾之紀錄檔'_gaps.json')，不連網、不寫檔。
+ * 直接下載者folder為週期鍵(如'4hr')；合併者之基底為getIntervalPlan回傳之baseKey。紀錄檔不合格者整檔視為無紀錄。
+ *
+ * @function readGaps
+ * @param {String} fdData - 儲存的根資料夾路徑(同saveData之opt.fdData)
+ * @param {String} name - 資料名稱分類
+ * @param {String} type - 資料類型分類
+ * @param {String} folder - 資料夾名(週期鍵或baseKey)
+ * @returns {Array} 回傳陣列，各元素為 { tag, from, to, n, state, validCount, firstValid, lastValid, lastKind, lastHttpStatus, lastCode, uncounted, lastUncountedKind, markedAt }，依分段與起點排序，資料夾或紀錄檔不存在、或紀錄檔不合格時為空陣列
+ * @example
+ *
+ * import { readGaps } from './src/gaps.mjs'
+ *
+ * let gaps = readGaps('./data', 'ETH', 'price', '4hr')
+ * // => [{ tag: '20200215000000', from: '2020-02-19T20:00:00', to: '2020-02-19T20:00:00', n: 1, state: 'pending', validCount: 1, ... }]
+ *
+ */
+let readGaps = (fdData, name, type, folder) => {
+    if (!isestr(fdData)) {
+        throw new Error('invalid fdData')
+    }
+    if (!isestr(name)) {
+        throw new Error('invalid name')
+    }
+    if (!isestr(type)) {
+        throw new Error('invalid type')
+    }
+    if (!isestr(folder)) {
+        throw new Error('invalid folder')
+    }
+    let p = parseGapFile(fpGapsOf(path.resolve(fdData, name, type, folder)))
+    if (p === null) {
+        return []
+    }
+    let rs = []
+    for (let tag of [...p.byTag.keys()].sort()) {
+        for (let e of p.byTag.get(tag)) {
+            rs.push({ ...e.rg })
+        }
+    }
+    return rs
+}
+
+
+export { getGapOpts, gridOpens, GAP_FILE, fpGapsOf, parseGapFile, openGapStore, applyAttempt, readCsvOpens, readGaps }
+export default readGaps

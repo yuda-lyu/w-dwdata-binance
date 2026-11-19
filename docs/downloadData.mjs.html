@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#aggregateData">aggregateData</a></li><li><a href="global.html#checkDataComplete">checkDataComplete</a></li><li><a href="global.html#downloadData">downloadData</a></li><li><a href="global.html#getIntervalPlan">getIntervalPlan</a></li><li><a href="global.html#getIntervals">getIntervals</a></li><li><a href="global.html#getOffsets">getOffsets</a></li><li><a href="global.html#saveData">saveData</a></li><li><a href="global.html#syncData">syncData</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#aggregateData">aggregateData</a></li><li><a href="global.html#applyAttempt">applyAttempt</a></li><li><a href="global.html#checkDataComplete">checkDataComplete</a></li><li><a href="global.html#classifyResult">classifyResult</a></li><li><a href="global.html#downloadData">downloadData</a></li><li><a href="global.html#downloadDataDetail">downloadDataDetail</a></li><li><a href="global.html#getFetchOpts">getFetchOpts</a></li><li><a href="global.html#getGapOpts">getGapOpts</a></li><li><a href="global.html#getIntervalPlan">getIntervalPlan</a></li><li><a href="global.html#getIntervals">getIntervals</a></li><li><a href="global.html#getOffsets">getOffsets</a></li><li><a href="global.html#gridOpens">gridOpens</a></li><li><a href="global.html#openGapStore">openGapStore</a></li><li><a href="global.html#parseGapFile">parseGapFile</a></li><li><a href="global.html#readGaps">readGaps</a></li><li><a href="global.html#readIntOpt">readIntOpt</a></li><li><a href="global.html#requestKlines">requestKlines</a></li><li><a href="global.html#saveData">saveData</a></li><li><a href="global.html#syncData">syncData</a></li></ul>
     
 </nav>
 
@@ -45,20 +45,17 @@
     
     <section>
         <article>
-            <pre class="prettyprint source linenums"><code>import axios from 'axios'
-import ot from 'dayjs'
+            <pre class="prettyprint source linenums"><code>import ot from 'dayjs'
 import utc from 'dayjs/plugin/utc.js'
 import timezone from 'dayjs/plugin/timezone.js'
 import get from 'lodash-es/get.js'
 import map from 'lodash-es/map.js'
-import some from 'lodash-es/some.js'
 import size from 'lodash-es/size.js'
 import join from 'lodash-es/join.js'
-import isarr from 'wsemi/src/isarr.mjs'
 import iseobj from 'wsemi/src/iseobj.mjs'
 import isbol from 'wsemi/src/isbol.mjs'
 import isestr from 'wsemi/src/isestr.mjs'
-import delay from 'wsemi/src/delay.mjs'
+import { getFetchOpts, requestKlines } from './requestKlines.mjs'
 
 
 ot.extend(utc)
@@ -69,6 +66,7 @@ ot.extend(timezone)
  * 下載指定時間區間內的 K 線數據(Kline)，並可選擇轉為 CSV 格式輸出。
  * 某根K線若於擷取當下尚未收棒，其結束時間改為擷取時刻；此僅為提示，不保證其餘各根已定稿(幣安於名目收棒後仍可能短暫回傳非定稿值)，亦非判定未收棒之充要條件(幣安停機時段之歷史K線結束時間本即早於名目收棒)。
  * 回應若非陣列(例如HTML頁面或錯誤物件)，或其中有非陣列之列，視為無數據。
+ * 請求失敗時重試(預設3次，間隔1、3、9秒)：連線錯誤、逾時(opt.timeRequest，預設30秒)、HTTP 5xx、429(有Retry-After且不超過opt.timeRetryMax時依之)、403、HTTP 2xx而回應非陣列；HTTP 400與其餘4xx不重試，418(IP封鎖)不重試。請求成功時不多送請求、不多等待。
  *
  * @async
  * @function downloadData
@@ -81,7 +79,13 @@ ot.extend(timezone)
  * @param {String} [opt.timeZone='Asia/Taipei'] - 時間字串與 epoch 互轉所用的固定時區（IANA 時區名，如 'UTC'、'Asia/Taipei'），與下載機器本地時區脫鉤，確保跨機器產出的時間標籤一致
  * @param {Object} [opt.proxy] - 代理伺服器設定，符合 axios proxy 格式 `{ protocol, host, port }`
  * @param {boolean} [opt.useConvertToCsv=true] - 是否將結果轉換為 CSV 字串格式
- * @returns {Promise} 回傳Promise，resolve回傳解析後的 K 線資料陣列，或轉為 CSV 字串（依 useConvertToCsv 而定），reject回傳錯誤訊息
+ * @param {Integer} [opt.retryTimes=3] - 請求失敗後之重試次數(非負整數)，0代表不重試
+ * @param {Integer} [opt.timeRetry=1000] - 第i次重試前等待timeRetry*3^(i-1)毫秒(預設1、3、9秒；非負整數，上限2147483647)，每次等待不超過timeRetryMax
+ * @param {Integer} [opt.timeRetryMax=60000] - 每次等待之上限毫秒數(非負整數，上限2147483647)，429之Retry-After超過此值時不再重試
+ * @param {Integer} [opt.timeRequest=30000] - 單一請求之逾時毫秒數(正整數，上限2147483647，自送出至收完回應)
+ * @param {boolean} [opt.useShowLog=false] - 是否顯示重試之log
+ * 重試與逾時之選項(retryTimes、timeRetry、timeRetryMax、timeRequest)為執行參數：undefined與null視為未給(用預設)，給了而無效(非整數、Infinity、'0x10'、負數、超出範圍等)改用預設，不拋錯；整數類接受數字字串並轉為數值(如'3'即3)。
+ * @returns {Promise} 回傳Promise，resolve回傳解析後的 K 線資料陣列，或轉為 CSV 字串（依 useConvertToCsv 而定），無數據或重試後仍失敗時為undefined
  * @example
  *
  * import WDwdataBinace from './src/WDwdataBinace.mjs'
@@ -120,6 +124,26 @@ ot.extend(timezone)
  *
  */
 let downloadData = async (endpoint, symbol, timeStart, timeEnd, interval, opt = {}) => {
+    let d = await downloadDataDetail(endpoint, symbol, timeStart, timeEnd, interval, opt)
+    return d.result
+}
+
+
+/**
+ * 同downloadData，另回傳請求之結果(內部使用，供saveData分類與記錄)。
+ *
+ * @async
+ * @function downloadDataDetail
+ * @param {string} endpoint - 同downloadData
+ * @param {string} symbol - 同downloadData
+ * @param {string} timeStart - 同downloadData
+ * @param {string} timeEnd - 同downloadData
+ * @param {string} interval - 同downloadData
+ * @param {Object} [opt={}] - 同downloadData
+ * @param {Object} [ctx={}] - 本次執行之狀態 { reachable, halted, haltKind }，見requestKlines
+ * @returns {Promise} resolve回傳 { result, kind, httpStatus, code, attempts, opens, startTime, endTime }，result同downloadData之回傳，opens為回應各列之開盤毫秒(kind為'ok'時，否則null)，startTime與endTime為請求之起訖毫秒
+ */
+let downloadDataDetail = async (endpoint, symbol, timeStart, timeEnd, interval, opt = {}, ctx = {}) => {
 
     //check
     if (!isestr(endpoint)) {
@@ -145,6 +169,9 @@ let downloadData = async (endpoint, symbol, timeStart, timeEnd, interval, opt = 
     if (!isestr(interval)) {
         throw new Error('invalid interval')
     }
+
+    //fo, 重試與逾時之選項, 給了而無效改用預設(不拋)
+    let fo = getFetchOpts(opt)
 
     //timeZone
     let timeZone = get(opt, 'timeZone')
@@ -172,6 +199,9 @@ let downloadData = async (endpoint, symbol, timeStart, timeEnd, interval, opt = 
         useConvertToCsv = true
     }
 
+    //useShowLog
+    let useShowLog = get(opt, 'useShowLog') === true
+
     //limit, 0.5d=0.5*24*60=720筆分鐘數據/每半天
     let limit = 1000 //每次請求的資料點數量, 最高1000
 
@@ -189,81 +219,104 @@ let downloadData = async (endpoint, symbol, timeStart, timeEnd, interval, opt = 
     // let url = `${endpoint}?symbol=${symbol}&amp;interval=${interval}&amp;startTime=${startTime}&amp;endTime=${endTime}&amp;limit=${limit}`
     // // console.log('url', url)
 
-    //rs
+    //log, 重試之訊息(只在useShowLog)
+    let log = null
+    if (useShowLog) {
+        log = (msg) => {
+            console.log(`get k-data for symbol[${symbol}] ${msg}`)
+        }
+    }
+
+    //get, 含重試與逾時; 回應須為陣列且各列為陣列, 否則(例如HTML頁面或錯誤物件)視為無數據, 避免被逐字元或逐值轉成無效列而覆寫既有檔案
     let url = ''
     let rs = []
-    try {
-
-        //get
-        let response = await axios.get(endpoint, {
-            params: {
-                symbol,
-                startTime,
-                endTime,
-                interval,
-                limit,
-            },
-            // proxy,
-        })
-        let res = response.data
-
-        //check, 回應須為陣列且各列為陣列, 否則(例如HTML頁面或錯誤物件)視為無數據, 避免被逐字元或逐值轉成無效列而覆寫既有檔案
-        if (!isarr(res) || some(res, (v) => !isarr(v))) {
-            console.log(`invalid response for symbol[${symbol}]`)
-            res = []
-        }
-
-        //url
-        url = get(response, 'request.res.responseUrl', '')
-        // console.log('url',url)
-
-        //delay
-        await delay(100) //幣安limit: 2400 requests per minute
-
-        //timeDataMax
-        let timeDataMax = ott().format('YYYY-MM-DDTHH:mm:ss')
-
-        //parse
-        rs = map(res, (v) => {
-
-            //timeDataStart
-            let timeDataStart = ott(v[0]).format('YYYY-MM-DDTHH:mm:ss')
-            // if (timeDataStart > timeDataMax) {
-            //     timeDataStart = timeDataMax
-            // }
-
-            //timeDataEnd
-            let timeDataEnd = ott(v[6]).format('YYYY-MM-DDTHH:mm:ss')
-            if (timeDataEnd > timeDataMax) {
-                timeDataEnd = timeDataMax
+    let d = await requestKlines(endpoint, {
+        symbol,
+        startTime,
+        endTime,
+        interval,
+        limit,
+    }, fo, ctx, {
+        onAttempt: (response, c) => {
+            if (c.kind === 'invalidResponse') {
+                console.log(`invalid response for symbol[${symbol}]`)
             }
-
-            return [
-                timeDataStart, //開始時間
-                v[1], // 開盤價
-                v[2], // 最高價
-                v[3], // 最低價
-                v[4], // 收盤價
-                v[5], // 成交量, index無此數據
-                timeDataEnd, //結束時間
-                v[7], // 成交金額, index無此數據
-                v[8], // 成交筆數, index無此數據
-                v[9], // 主動買入成交量, index無此數據
-                v[10], // 主動買入成交金額, index無此數據
-                // v[11] // 忽略此欄位, index無此數據
-            ]
-        })
-
+            if (response &amp;&amp; response.status >= 200 &amp;&amp; response.status &lt; 300) {
+                url = get(response, 'request.res.responseUrl', '')
+            }
+        },
+        log,
+    })
+    if (d.kind !== 'ok' &amp;&amp; d.kind !== 'invalidResponse') {
+        console.log(`can not get k-data for symbol[${symbol}]`, `kind[${d.kind}] status[${d.httpStatus}] code[${d.code}] attempts[${d.attempts}]`)
     }
-    catch (err) {
-        console.log(`can not get k-data for symbol[${symbol}]`, err)
+
+    //opens, 回應各列之開盤毫秒
+    let opens = null
+    if (d.kind === 'ok') {
+        try {
+
+            //timeDataMax
+            let timeDataMax = ott().format('YYYY-MM-DDTHH:mm:ss')
+
+            //parse
+            rs = map(d.data, (v) => {
+
+                //timeDataStart
+                let timeDataStart = ott(v[0]).format('YYYY-MM-DDTHH:mm:ss')
+                // if (timeDataStart > timeDataMax) {
+                //     timeDataStart = timeDataMax
+                // }
+
+                //timeDataEnd
+                let timeDataEnd = ott(v[6]).format('YYYY-MM-DDTHH:mm:ss')
+                if (timeDataEnd > timeDataMax) {
+                    timeDataEnd = timeDataMax
+                }
+
+                return [
+                    timeDataStart, //開始時間
+                    v[1], // 開盤價
+                    v[2], // 最高價
+                    v[3], // 最低價
+                    v[4], // 收盤價
+                    v[5], // 成交量, index無此數據
+                    timeDataEnd, //結束時間
+                    v[7], // 成交金額, index無此數據
+                    v[8], // 成交筆數, index無此數據
+                    v[9], // 主動買入成交量, index無此數據
+                    v[10], // 主動買入成交金額, index無此數據
+                    // v[11] // 忽略此欄位, index無此數據
+                ]
+            })
+            opens = map(d.data, (v) => Number(v[0]))
+
+        }
+        catch (err) {
+            console.log(`can not get k-data for symbol[${symbol}]`, err)
+            rs = []
+            opens = null
+            d.kind = 'invalidResponse' //無法解析之回應不算觀察
+        }
+    }
+
+    //r
+    let r = {
+        result: undefined,
+        kind: d.kind,
+        httpStatus: d.httpStatus,
+        code: d.code,
+        attempts: d.attempts,
+        opens,
+        startTime,
+        endTime,
     }
 
     //check
     if (size(rs) === 0) {
         console.log('url', url)
         console.log(`invalid k-data for symbol[${symbol}]`)
-        return
+        return r
     }
 
     //useConvertToCsv
@@ -276,10 +329,12 @@ let downloadData = async (endpoint, symbol, timeStart, timeEnd, interval, opt = 
         rs = cs
     }
 
-    return rs
+    r.result = rs
+    return r
 }
 
 
+export { downloadDataDetail }
 export default downloadData
 </code></pre>
         </article>
@@ -295,7 +350,7 @@ export default downloadData
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Nov 19 2026 16:51:42 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Nov 19 2026 22:42:53 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

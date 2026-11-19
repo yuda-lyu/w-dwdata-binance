@@ -6,6 +6,7 @@ import ot from 'dayjs'
 import utc from 'dayjs/plugin/utc.js'
 import timezone from 'dayjs/plugin/timezone.js'
 import saveData from '../src/saveData.mjs'
+import timers from '../src/timers.mjs'
 
 
 ot.extend(utc)
@@ -117,6 +118,7 @@ let mtimeOf = (k) => {
 
 let run = async (opt = {}) => {
     reqs = []
+    waits = []
     let r = await saveData('T', 'price', endpoint, 'TESTUSDT', '4hr', {
         dayStart,
         timeZone,
@@ -128,10 +130,17 @@ let run = async (opt = {}) => {
 
 let server = null
 
+//waits, 重試前之等待(注入之計時器只記錄毫秒數而不真的等待)
+let waits = []
+let sleepReal = timers.sleep
+
 
 describe('api-saveData', function() {
 
     before(async function() {
+        timers.sleep = async (ms) => {
+            waits.push(ms)
+        }
         fs.rmSync(fdRoot, { recursive: true, force: true })
         fs.mkdirSync(fd, { recursive: true })
         server = http.createServer((req, res) => {
@@ -166,6 +175,7 @@ describe('api-saveData', function() {
     })
 
     after(async function() {
+        timers.sleep = sleepReal
         await new Promise((resolve) => server.close(resolve))
         fs.rmSync(fdRoot, { recursive: true, force: true })
         //test/_tmp 已無其他測試之暫存時一併移除(並行之測試可能同時建立或移除, 不拋)
@@ -241,45 +251,63 @@ describe('api-saveData', function() {
         assert.strictEqual(readSeg(3), csvFinal(3))
     })
 
-    it('I7 重抓時API回500則保留舊檔, 下輪再試', async function() {
-        //R09、矩陣22
+    it('I7 重抓時API回500則重試3次(等1、3、9秒)後保留舊檔並列入failed, 下輪再試', async function() {
+        //R09、矩陣22; 舊檔各根皆在, 故無缺根、不寫紀錄檔
         let c = csvLastPartial(3, true)
         writeSeg(3, c, lastOpen(3) + 3600e3)
         mode.status500[segStart(3)] = true
-        await run()
-        assert.deepStrictEqual(reqs, [segStart(6), segStart(3)])
+        let r = await run()
+        assert.deepStrictEqual(reqs, [segStart(6), segStart(3), segStart(3), segStart(3), segStart(3)])
+        assert.deepStrictEqual(waits, [1000, 3000, 9000])
         assert.strictEqual(readSeg(3), c)
+        assert.deepStrictEqual(r.failed, [{ tag: tagOf(3), ts: fmt(segStart(3)), te: fmt(closeOf(3) - 1000), kind: 'httpError', httpStatus: 500, code: null, attempts: 4, counted: true }])
+        assert.strictEqual(r.gaps, undefined)
+        assert.strictEqual(fs.existsSync(`${fd}/_gaps.json`), false)
         mode.status500 = {}
-        await run()
+        r = await run()
         assert.deepStrictEqual(reqs, [segStart(6), segStart(3)])
+        assert.deepStrictEqual(waits, [])
         assert.strictEqual(readSeg(3), csvFinal(3))
+        assert.strictEqual(r.failed, undefined)
     })
 
-    it('I7b HTTP 200 但回應非陣列(HTML)時不覆寫既有檔', async function() {
+    it('I7b HTTP 200 但回應非陣列(HTML)時重試後不覆寫既有檔, 列為不算觀察', async function() {
         //R12、矩陣23
         let c = csvLastPartial(2, true)
         writeSeg(2, c, lastOpen(2) + 3600e3)
         mode.html200[segStart(2)] = true
-        await run()
-        assert.deepStrictEqual(reqs, [segStart(6), segStart(2)])
+        let r = await run()
+        assert.deepStrictEqual(reqs, [segStart(6), segStart(2), segStart(2), segStart(2), segStart(2)])
         assert.strictEqual(readSeg(2), c)
+        assert.deepStrictEqual(r.failed.map((v) => [v.tag, v.kind, v.httpStatus, v.attempts, v.counted]), [[tagOf(2), 'invalidResponse', 200, 4, false]])
         mode.html200 = {}
         await run()
         assert.strictEqual(readSeg(2), csvFinal(2))
     })
 
-    it('I8 交易所段中缺棒之舊段照舊每輪重抓(O1暫緩, 行為不變)', async function() {
-        //R09、矩陣24
-        mode.gapOpen = segStart(4) + 10 * ivMs
+    it('I8 交易所段中缺棒之舊段: 記為暫無數據(紀錄檔)、每輪重抓(原因pending)並累計, 取得後清除紀錄', async function() {
+        //R09、矩陣24; 標註(3次且滿7天)見 api-saveDataGaps
+        let gap = segStart(4) + 10 * ivMs
+        let fpGap = `${fd}/_gaps.json`
+        mode.gapOpen = gap
         writeSeg(4, csvFinal(4), closeOf(4) + 120e3)
-        await run()
+        let r = await run()
         assert.deepStrictEqual(reqs, [segStart(6), segStart(4)])
+        assert.deepStrictEqual(r.items.map((v) => [v.tag, v.reason]), [[tagOf(6), 'latest'], [tagOf(4), 'count']])
         assert.strictEqual(readSeg(4).split('\n').length, 47)
-        await run()
+        let j = JSON.parse(fs.readFileSync(fpGap, 'utf8'))
+        assert.deepStrictEqual(j.ranges.map((v) => [v.tag, v.from, v.to, v.n, v.state, v.validCount, v.lastKind, v.lastHttpStatus, v.uncounted]), [[tagOf(4), fmt(gap), fmt(gap), 1, 'pending', 1, 'missing', 200, 0]])
+        assert.deepStrictEqual(r.gaps.map((v) => [v.tag, v.from, v.n, v.state, v.validCount]), [[tagOf(4), fmt(gap), 1, 'pending', 1]])
+        assert.strictEqual(r.failed, undefined)
+        r = await run()
         assert.deepStrictEqual(reqs, [segStart(6), segStart(4)])
+        assert.deepStrictEqual(r.items.map((v) => [v.tag, v.reason]), [[tagOf(6), 'latest'], [tagOf(4), 'pending']])
+        assert.deepStrictEqual(r.gaps.map((v) => [v.state, v.validCount]), [['pending', 2]])
         mode.gapOpen = null
-        await run()
+        r = await run()
         assert.strictEqual(readSeg(4), csvFinal(4))
+        assert.strictEqual(fs.existsSync(fpGap), false)
+        assert.strictEqual(r.gaps, undefined)
         await run()
         assert.deepStrictEqual(reqs, [segStart(6)])
     })
@@ -302,7 +330,8 @@ describe('api-saveData', function() {
         writeSeg(3, csvLastPartial(3, true), lastOpen(3) + 3600e3)
         mode.status500[segStart(6)] = true
         let r = await run()
-        assert.deepStrictEqual(reqs, [segStart(6), segStart(3)])
+        assert.deepStrictEqual(reqs, [segStart(6), segStart(6), segStart(6), segStart(6), segStart(3)])
+        assert.deepStrictEqual(r.failed.map((v) => [v.tag, v.kind, v.httpStatus, v.attempts, v.counted]), [[tagOf(6), 'httpError', 500, 4, true]])
         assert.strictEqual(r.timeLast, undefined)
         assert.strictEqual(r.timeKeep, undefined)
         assert.strictEqual(readSeg(3), csvFinal(3))

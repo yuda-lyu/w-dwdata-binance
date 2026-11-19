@@ -29,7 +29,7 @@
 <nav >
     
     
-    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#aggregateData">aggregateData</a></li><li><a href="global.html#checkDataComplete">checkDataComplete</a></li><li><a href="global.html#downloadData">downloadData</a></li><li><a href="global.html#getIntervalPlan">getIntervalPlan</a></li><li><a href="global.html#getIntervals">getIntervals</a></li><li><a href="global.html#getOffsets">getOffsets</a></li><li><a href="global.html#saveData">saveData</a></li><li><a href="global.html#syncData">syncData</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#aggregateData">aggregateData</a></li><li><a href="global.html#applyAttempt">applyAttempt</a></li><li><a href="global.html#checkDataComplete">checkDataComplete</a></li><li><a href="global.html#classifyResult">classifyResult</a></li><li><a href="global.html#downloadData">downloadData</a></li><li><a href="global.html#downloadDataDetail">downloadDataDetail</a></li><li><a href="global.html#getFetchOpts">getFetchOpts</a></li><li><a href="global.html#getGapOpts">getGapOpts</a></li><li><a href="global.html#getIntervalPlan">getIntervalPlan</a></li><li><a href="global.html#getIntervals">getIntervals</a></li><li><a href="global.html#getOffsets">getOffsets</a></li><li><a href="global.html#gridOpens">gridOpens</a></li><li><a href="global.html#openGapStore">openGapStore</a></li><li><a href="global.html#parseGapFile">parseGapFile</a></li><li><a href="global.html#readGaps">readGaps</a></li><li><a href="global.html#readIntOpt">readIntOpt</a></li><li><a href="global.html#requestKlines">requestKlines</a></li><li><a href="global.html#saveData">saveData</a></li><li><a href="global.html#syncData">syncData</a></li></ul>
     
 </nav>
 
@@ -51,6 +51,8 @@ import ot from 'dayjs'
 import utc from 'dayjs/plugin/utc.js'
 import timezone from 'dayjs/plugin/timezone.js'
 import get from 'lodash-es/get.js'
+import map from 'lodash-es/map.js'
+import some from 'lodash-es/some.js'
 import size from 'lodash-es/size.js'
 import sep from 'wsemi/src/sep.mjs'
 import isestr from 'wsemi/src/isestr.mjs'
@@ -62,10 +64,12 @@ import cint from 'wsemi/src/cint.mjs'
 import fsIsFile from 'wsemi/src/fsIsFile.mjs'
 import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
 import fsCreateFolder from 'wsemi/src/fsCreateFolder.mjs'
-import downloadData from './downloadData.mjs'
+import { downloadDataDetail } from './downloadData.mjs'
 import checkDataComplete from './checkDataComplete.mjs'
 import aggregateData from './aggregateData.mjs'
 import { getIntervals, getIntervalPlan } from './intervals.mjs'
+import { getFetchOpts } from './requestKlines.mjs'
+import { getGapOpts, gridOpens, fpGapsOf, openGapStore, applyAttempt, readCsvOpens } from './gaps.mjs'
 
 
 ot.extend(utc)
@@ -87,6 +91,10 @@ ot.extend(timezone)
  * 週期鍵、opt.aggregateFrom(給了而無效)、opt.timeZone無效時拋錯，拋錯先於任何連網、建夾、寫檔，訊息依'invalid &lt;名稱>: must be &lt;種類>'且不帶輸入值。
  * 合併之規則：開=首根之開、高=最高、低=最低、收=末根之收，量、成交額、筆數、主動買入量與額=加總(十進位精確加總，小數位數取各根之最大者)，開始時間=首根之開始時間，結束時間=末根之結束時間。某目標根之基底各根不齊(交易所缺漏)、未收棒或擷取於收棒前者不輸出，記入回傳之aggregate.missing。合併之分段以分段檔之修改時間判定是否重算(見aggregateData)，刪除合併分段檔即可強制重算。
  * 直接下載時，分段起點不在各根之對齊格點上者(例如aggregateFrom為'none'時台北之段起點為UTC 16:00，12hr與1day之格點不在此)，每段仍為該段應有筆數，段末根之收棒晚於段終點，完整與否以末根之名目收棒判定；最新分段於其首根開盤前回應為空，此時不寫檔且timeLast與timeKeep為undefined，仍在形成之根屬前一段，由前一段之不完整判定重抓更新。
+ * 抓與用分開：本函數只負責抓、重試與標註，遇缺數據時怎麼用由使用端決定。每段之請求失敗時重試(見downloadData；預設3次，間隔1、3、9秒，逾時opt.timeRequest)；418(IP封鎖)、429之Retry-After超過opt.timeRetryMax或用盡重試、403(防火牆封鎖)用盡重試、或連續opt.netFailTimes(預設3)段皆為連線層失敗(連線錯誤、逾時)時，本次執行停止送出後續請求(其餘分段列入failed，attempts為0)。
+ * 暫無數據與缺根：應有之根為分段請求起訖內之UTC原生格點且已收棒加寬限者(以該次請求前之時刻計)。取不到之根(回應不含該根，或請求失敗)依該次嘗試分類：有效觀察 = HTTP 2xx陣列而缺該根，或HTTP 4xx/5xx(400、403、418、429除外)且同一K線端點於本次執行對別的分段回過2xx陣列；其餘(連線錯誤、逾時、400、403、418、429、2xx而非陣列、本次無任何2xx陣列回應之4xx/5xx)不算觀察(例：只下載單一分段而該段回錯誤、或端點路徑有誤而一律404，皆不計)。每次執行每根至多1次有效觀察。「相隔」依主機之時鐘，主機時鐘向前跳會提早標註。
+ * 有效觀察累計不少於opt.noDataTimes(預設3)、且首次與最近一次相隔不少於opt.timeNoData(預設7天)時(於有效觀察之當下判定)，該根標註為缺根('nodata')，之後該段若只缺已標註之根即為完整而不再請求；未達者為暫無數據('pending')，其分段每次執行都重抓(items之reason為'pending')；任何一次取得該根即刪除其紀錄。不算觀察之嘗試不改有效觀察之次數與時刻(只累計uncounted)，故斷線期間不會被標註。
+ * 紀錄存於資料夾內與分段檔同夾之'_gaps.json'(每個資料夾一個，只在該資料夾有暫無數據或已標註之根時存在；沒有時不存在，無缺根時不新增任何檔)，格式為 { v: 1, interval, timeZone, ranges: [{ tag, from, to, n, state, validCount, firstValid, lastValid, lastKind, lastHttpStatus, lastCode, uncounted, lastUncountedKind, markedAt }] }，tag為所屬分段(分段檔名)，from與to為首末根之開盤時間字串(同分段檔之時區)，firstValid、lastValid、markedAt為ISO時刻；同一分段內連續且紀錄相同之根合併為一個範圍，檔內每個範圍一列；每次執行讀一次、有變動才以寫暫存檔再改名之方式覆寫；讀取時逐範圍檢查欄位(檔案不得超過64MiB)，不合格者整檔視為無紀錄(重新累計，下次寫入時以正確內容覆蓋，無紀錄則刪除)。紀錄檔與其暫存檔不會被當成分段(分段只讀'.csv')。手動重置：刪除紀錄檔，或給opt.useResetGaps為true(本次先刪除期間內各分段之紀錄、期間外者不動；乾跑不刪)。標註後不定期重新確認。
  *
  * @async
  * @function saveData
@@ -106,7 +114,17 @@ ot.extend(timezone)
  * @param {Boolean} [opt.useDryRun=false] - 是否只檢查不下載，true時不發請求亦不寫檔，回傳之items列出將被下載之分段與原因
  * @param {Boolean} [opt.useShowLog=false] - 是否顯示 log 資訊
  * @param {String} [opt.aggregateFrom='auto'] - 取得方式：'auto'(對齊則直接下載，否則自動取基底合併)、'none'(直接下載原生週期)或基底週期鍵(如'1hr'，須能整除目標週期且格線與timeZone之界線對齊，否則拋錯)；undefined與null視為未給(改用'auto')，給了而無效即拋錯(決定資料口徑，不改用預設)
+ * @param {Integer} [opt.retryTimes=3] - 請求失敗後之重試次數(非負整數)，0代表不重試
+ * @param {Integer} [opt.timeRetry=1000] - 第i次重試前等待timeRetry*3^(i-1)毫秒(預設1、3、9秒；非負整數，上限2147483647)，每次等待不超過timeRetryMax
+ * @param {Integer} [opt.timeRetryMax=60000] - 每次等待之上限毫秒數(非負整數，上限2147483647)，429之Retry-After超過此值時本次執行停止送出後續請求
+ * @param {Integer} [opt.timeRequest=30000] - 單一請求之逾時毫秒數(正整數，上限2147483647，自送出至收完回應)
+ * @param {Integer} [opt.netFailTimes=3] - 連續此數之分段皆為連線層失敗(連線錯誤、逾時)時停止本次執行之後續請求(非負整數)，0代表不停止
+ * @param {Integer} [opt.noDataTimes=3] - 標註缺根所需之有效觀察次數(正整數)
+ * @param {Integer} [opt.timeNoData=604800000] - 標註缺根所需之首次至最近一次有效觀察之相隔毫秒數(非負整數，預設7天)
+ * @param {Boolean} [opt.useResetGaps=false] - 是否於本次執行先刪除期間內各分段之紀錄(手動重置)，只有true為啟用，其餘視為未給
+ * 新選項之檢測(retryTimes至useResetGaps)：undefined與null視為未給(用預設)；整數類接受數字字串並轉為數值(如'3'即3)，非整數、Infinity、'0x10'為無效。noDataTimes與timeNoData決定何時永久標註為缺根、之後不再抓(錯值會使資料靜默缺漏)，給了而無效即拋錯(於任何連網、建夾、寫檔前)，訊息依'invalid opt.&lt;名稱>: must be &lt;種類>'且不帶輸入值；retryTimes、timeRetry、timeRetryMax、timeRequest、netFailTimes為執行參數，給了而無效改用預設(不拋)
  * @returns {Promise} 回傳Promise，resolve回傳物件 { timeKeep, timeLast, items }，timeLast與timeKeep為本次下載之最新分段末兩列之開始時間（乾跑或最新分段未成功下載時為undefined），items為本次下載（乾跑時為將下載）之分段陣列，各元素為 { tag, ts, te, reason }，reason為'latest'（最新分段）、'notExist'（檔案不存在）或checkDataComplete回傳之不完整原因；合併時items為基底週期之下載分段，timeLast與timeKeep為最新兩根已合併輸出之目標根之開始時間，另含aggregate物件 { key, base, baseKey, count, utcOffset, fd, segments, missing }：key為合併序列之資料夾名，base為基底週期鍵，baseKey為基底之資料夾名，count為每根由幾根基底合併，utcOffset為時區之UTC偏移分鐘數，fd為合併序列之資料夾絕對路徑，segments為本次重算之分段 [{ tag, n }]，missing為未輸出之目標根 [{ time, have, need, reason }]（reason為'open'尚未收棒、'gap'基底缺漏、'notFinal'基底擷取於收棒前、'invalidBase'基底數值無法解析；早於最早一根基底資料者不列）；reject回傳錯誤訊息
+ * 補充(回傳)：aggregate.missing之元素中，早於最早一根基底資料而缺之基底根所在之分段本次請求失敗者亦列入(不論該失敗是否為有效觀察)；reason為'gap'者，於缺之基底根有紀錄或其分段本次請求失敗時另含cause與causes：cause為缺之基底根之成因之最嚴者('unobserved'基底分段本次請求失敗而無資料 > 'unknown'尚未嘗試 > 'pending'暫無數據 > 'nodata'已標註缺根)，causes為各成因之根數 { pending, nodata, unobserved, unknown }，含暫無數據者另含validCount(最少之有效觀察次數)與firstValid(最早之首次有效觀察時刻)；缺之基底根全為'unknown'時不附(同既有)。另於非空時含：failed為本次請求失敗之分段 [{ tag, ts, te, kind, httpStatus, code, attempts, counted }]（kind為'httpError'、'badRequest'、'blocked'、'rateLimited'、'banned'、'invalidResponse'、'timeout'、'network'；attempts為實際請求次數(停止送出後之段為0)；counted為此次是否為有效觀察），gaps為期間內全部暫無數據與已標註之根 [{ tag, from, to, n, state, validCount, firstValid, lastValid, lastKind, lastHttpStatus, lastCode, uncounted, lastUncountedKind, markedAt }]（彙整期間內各段之紀錄檔，不只本次；state為'pending'或'nodata'）；items之reason另有'pending'(該段有暫無數據之根)；合併時failed與gaps為基底之請求失敗與缺根；請求皆成功且無缺根時不含failed與gaps(回傳與既有相同)。
  */
 
 let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
@@ -134,13 +152,17 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
     //plan, 直接下載或合併; 週期鍵、aggregateFrom、timeZone無效(含須合併而偏移有變動)時於任何連網、建夾、寫檔前拋錯
     let plan = getIntervalPlan(interval, opt)
 
+    //check, 標註缺根之選項(noDataTimes、timeNoData)給了而無效即拋(先於任何連網、建夾、寫檔); 重試與逾時之選項(retryTimes等)給了而無效改用預設, 不拋
+    getGapOpts(opt)
+
     //native, 直接下載原生週期, 存於以週期鍵命名之資料夾
     if (plan.mode === 'native') {
         return saveNative(name, type, endpoint, symbol, interval, opt, interval)
     }
 
-    //base, 以同一機制下載基底週期之分段, 存於plan.baseKey之資料夾(含偏移與dayStart, 不與直接下載之同鍵資料夾共用)
-    let rb = await saveNative(name, type, endpoint, symbol, plan.base, opt, plan.baseKey)
+    //base, 以同一機制下載基底週期之分段, 存於plan.baseKey之資料夾(含偏移與dayStart, 不與直接下載之同鍵資料夾共用); io.gapStore為該資料夾之紀錄(本次已讀入), 供合併判定缺根之成因而不重讀
+    let io = {}
+    let rb = await saveNative(name, type, endpoint, symbol, plan.base, opt, plan.baseKey, io)
 
     //timeZone
     let timeZone = get(opt, 'timeZone')
@@ -195,6 +217,8 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
             timeZone,
             dayStart,
             timeGrace,
+            failedBase: map(get(rb, 'failed', []), 'tag'),
+            gapStore: io.gapStore,
             useShowLog,
         })
     }
@@ -203,6 +227,8 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
         timeKeep: r.timeKeep,
         timeLast: r.timeLast,
         items: rb.items,
+        ...(rb.failed ? { failed: rb.failed } : {}), //failed與gaps為基底之請求失敗與缺根, 只在非空時出現
+        ...(rb.gaps ? { gaps: rb.gaps } : {}),
         aggregate: {
             key: plan.key,
             base: plan.base,
@@ -217,8 +243,8 @@ let saveData = async(name, type, endpoint, symbol, interval, opt = {}) => {
 }
 
 
-//saveNative, 直接下載原生週期(interval為週期表之鍵)之分段並存檔(引數已由saveData檢查); folder為存檔之資料夾名
-let saveNative = async(name, type, endpoint, symbol, interval, opt, folder) => {
+//saveNative, 直接下載原生週期(interval為週期表之鍵)之分段並存檔(引數已由saveData檢查); folder為存檔之資料夾名; io為內部之輸出(io.gapStore為該資料夾之紀錄)
+let saveNative = async(name, type, endpoint, symbol, interval, opt, folder, io = {}) => {
 
     //timeZone
     let timeZone = get(opt, 'timeZone')
@@ -296,6 +322,10 @@ let saveNative = async(name, type, endpoint, symbol, interval, opt, folder) => {
         useShowLog = false
     }
 
+    //fo, go, 重試與逾時、標註缺根之選項(已由saveData檢查)
+    let fo = getFetchOpts(opt)
+    let go = getGapOpts(opt)
+
     //fd
     let fd = path.resolve(fdData, name, type, folder)
     if (!fsIsFolder(fd)) {
@@ -346,6 +376,36 @@ let saveNative = async(name, type, endpoint, symbol, interval, opt, folder) => {
     }
     // console.log('rts', rts, size(rts))
 
+    //gs, 本資料夾之紀錄(每資料夾一個紀錄檔'_gaps.json', 本次執行只讀一次; 無紀錄檔時不讀), 有變動才於最後寫入
+    let gs = openGapStore(fd, { interval, timeZone })
+    io.gapStore = gs
+
+    //saveGaps, 寫入紀錄檔(寫檔失敗不中斷, 同分段檔)
+    let saveGaps = () => {
+        try {
+            gs.save()
+        }
+        catch (err) {
+            console.log(`can not save file`, fpGapsOf(fd), err)
+        }
+    }
+
+    //useResetGaps, 手動重置: 先刪除期間內各分段之紀錄(乾跑不刪; 期間外之分段之紀錄不動)並寫入
+    if (go.useResetGaps &amp;&amp; !useDryRun) {
+        if (gs.resetTags(new Set(map(rts.slice(0, -1), 'tag'))) > 0) {
+            saveGaps()
+        }
+    }
+
+    //ctx, 本次執行之狀態: reachable為同一K線端點於本次是否回過2xx陣列, halted為是否已停止送出請求(418、429、403、連續之連線層失敗)
+    let ctx = { reachable: false, halted: false, haltKind: null }
+
+    //netFails, 連續為連線層失敗(連線錯誤、逾時)之分段數
+    let netFails = 0
+
+    //att, 本次各分段之嘗試, 於全部分段處理完後才分類(可達與否須看整次執行)並更新紀錄檔
+    let att = []
+
     //偵測既有檔案完整者不抓, 若沒檔案或不完整就下載
     let csFin = ''
     let items = []
@@ -385,8 +445,20 @@ let saveNative = async(name, type, endpoint, symbol, interval, opt, folder) => {
             let fp = `${fd}/${tag}.csv`
             // console.log('fp', fp)
 
-            //ckComplete, 確認是否完整, 回傳不完整原因, 完整時回傳空字串
-            let ckComplete = () => {
+            //rangeOf, 本段請求之起訖毫秒(同downloadData之startTime與endTime); 只在需要時才換算(請求皆成功且無紀錄檔時不多做時間換算)
+            let range = null
+            let rangeOf = () => {
+                if (range === null) {
+                    range = {
+                        startMs: ott(ts, 'YYYY-MM-DDTHH:mm:ss').valueOf(),
+                        endMs: ott(te, 'YYYY-MM-DDTHH:mm:ss').valueOf(),
+                    }
+                }
+                return range
+            }
+
+            //ckComplete, 確認是否完整, 回傳不完整原因, 完整時回傳空字串; num為應有筆數(已標註缺根之根不計)
+            let ckComplete = (num = dataNum) => {
 
                 let c = fs.readFileSync(fp, 'utf8')
 
@@ -395,7 +467,7 @@ let saveNative = async(name, type, endpoint, symbol, interval, opt, folder) => {
 
                 //筆數不符, 或末根擷取時刻未晚於名目收棒加寬限(例如於當前時長內中斷不下載更新, 筆數雖相同但最末數據不完全), 皆視為不完整
                 let r = checkDataComplete(c, {
-                    dataNum,
+                    dataNum: num,
                     dataSec,
                     mtimeMs,
                     timeGrace,
@@ -408,10 +480,33 @@ let saveNative = async(name, type, endpoint, symbol, interval, opt, folder) => {
                 return r.reason
             }
 
+            //ckGaps, 紀錄中有該段之舊段: 有暫無數據之根則每次執行都抓('pending'); 只有已標註缺根之根時, 分段檔之各根加已標註之根等於應有之根且末根已定稿即完整, 整段皆已標註者無分段檔亦完整
+            let ckGaps = () => {
+                let sm = gs.summary(tag)
+                if (sm.pending) {
+                    if (useShowLog) {
+                        console.log(`not complete: pending`, fp)
+                    }
+                    return 'pending'
+                }
+                let expected = gridOpens(rangeOf().startMs, rangeOf().endMs, interval)
+                let num = size(expected) - sm.noData
+                if (!fsIsFile(fp)) {
+                    return num === 0 &amp;&amp; size(expected) > 0 ? '' : 'notExist'
+                }
+                if (num &lt;= 0) {
+                    return 'count'
+                }
+                return ckComplete(num)
+            }
+
             //reason, 須下載之原因
             let reason = ''
             if (bLast) {
                 reason = 'latest' //最新時間段一定要下載
+            }
+            else if (gs.has(tag)) {
+                reason = ckGaps() //紀錄中有該段(暫無數據或已標註缺根)
             }
             else if (!fsIsFile(fp)) {
                 reason = 'notExist' //若指定時之檔案不存在就要下載
@@ -438,19 +533,61 @@ let saveNative = async(name, type, endpoint, symbol, interval, opt, folder) => {
                 continue
             }
 
+            //a, 本段之嘗試
+            let a = { tag, ts, te, fp, startMs: null, endMs: null, tObs: null, kind: '', httpStatus: null, code: null, attempts: 0, opens: null }
+            att.push(a)
+
+            //check, 已停止送出請求(418、429、403, 續送會延長封鎖; 或連續之連線層失敗)時本段不請求, 記為未問到
+            if (ctx.halted) {
+                a.startMs = rangeOf().startMs
+                a.endMs = rangeOf().endMs
+                a.tObs = Date.now()
+                a.kind = ctx.haltKind
+                if (useShowLog) {
+                    console.log(`get ${name} ${type} [${ts}] -> [${te}] skipped (${ctx.haltKind})`)
+                }
+                continue
+            }
+
             if (useShowLog) {
                 console.log(`get ${name} ${type} [${ts}] -> [${te}] downloading...`)
             }
 
             //tReq, 送出請求前之時刻, 寫檔後設為檔案修改時間
             let tReq = Date.now()
+            a.tObs = tReq
 
-            //cs
-            let cs = await downloadData(endpoint, symbol, ts, te, dataInterval, {
+            //cs, 含重試與逾時
+            let d = await downloadDataDetail(endpoint, symbol, ts, te, dataInterval, {
                 timeZone,
                 proxy,
                 useConvertToCsv: true,
-            })
+                retryTimes: fo.retryTimes,
+                timeRetry: fo.timeRetry,
+                timeRetryMax: fo.timeRetryMax,
+                timeRequest: fo.timeRequest,
+                useShowLog,
+            }, ctx)
+            let cs = d.result
+            a.kind = d.kind
+            a.httpStatus = d.httpStatus
+            a.code = d.code
+            a.attempts = d.attempts
+            a.opens = d.opens
+            a.startMs = d.startTime
+            a.endMs = d.endTime
+
+            //netFails, 連續若干段皆為連線層失敗時停止本次執行之後續請求(斷線時免得每段各等重試與逾時)
+            if (d.kind === 'network' || d.kind === 'timeout') {
+                netFails++
+                if (fo.netFailTimes > 0 &amp;&amp; netFails >= fo.netFailTimes &amp;&amp; !ctx.halted) {
+                    ctx.halted = true
+                    ctx.haltKind = d.kind
+                }
+            }
+            else {
+                netFails = 0
+            }
 
             //check
             if (!isestr(cs)) {
@@ -485,6 +622,56 @@ let saveNative = async(name, type, endpoint, symbol, interval, opt, folder) => {
 
     }
 
+    //updateGaps, 依本段之嘗試更新各根之紀錄(只在記憶體, 全部更新完才一次寫入): 應有之根為本段請求起訖內之原生格點且已收棒加寬限(以嘗試之時刻計), 已取得者為回應與分段檔之各根; 該段無紀錄且回應不缺根時不讀分段檔、不更動紀錄
+    let updateGaps = (a, counted) => {
+        //不算觀察而該段無紀錄: 不新增紀錄(只累計既有紀錄之uncounted), 免讀分段檔
+        if (!counted &amp;&amp; !gs.has(a.tag)) {
+            return
+        }
+        let expected = gridOpens(a.startMs, a.endMs, interval).filter((o) => o + dataSec * 1000 + timeGrace &lt;= a.tObs)
+        let resp = new Set(a.opens || [])
+        let lack = some(expected, (o) => !resp.has(o))
+        if (gs.has(a.tag) || lack) {
+            let have = new Set([...resp, ...readCsvOpens(a.fp, timeZone)])
+            let changed = applyAttempt(gs.barsOf(a.tag), {
+                expected,
+                have,
+                counted,
+                kind: a.kind,
+                httpStatus: a.httpStatus,
+                code: a.code,
+                tObs: a.tObs,
+            }, go)
+            if (changed) {
+                gs.touch(a.tag)
+            }
+        }
+    }
+
+    //failed, 分類與紀錄: 全部分段處理完後才分類, 錯誤回應(httpError)只在同一K線端點於本次執行對別的分段回過2xx陣列時算有效觀察
+    let failed = []
+    if (!useDryRun) {
+        for (let a of att) {
+            let counted = a.kind === 'ok' || (a.kind === 'httpError' &amp;&amp; a.httpStatus >= 400 &amp;&amp; ctx.reachable) //有效觀察: 2xx陣列、或4xx/5xx(400、403、418、429另分類)且同一K線端點本次回過2xx陣列; 其餘之非2xx(例: 3xx之轉址頁面)不算觀察
+            if (a.kind !== 'ok') {
+                failed.push({
+                    tag: a.tag,
+                    ts: a.ts,
+                    te: a.te,
+                    kind: a.kind,
+                    httpStatus: a.httpStatus,
+                    code: a.code,
+                    attempts: a.attempts,
+                    counted,
+                })
+            }
+            updateGaps(a, counted)
+        }
+
+        //有變動(或既有紀錄檔不合格, 以本次之紀錄覆蓋, 無紀錄則刪除)才寫一次
+        saveGaps()
+    }
+
     //timeLast, timeKeep
     let timeLast = '' //最新時間 //_timeEnd
     let timeKeep = '' //最近數據不變時間 //now.add(-1, 'hour').format('YYYY-MM-DDTHH:mm:ss')
@@ -508,11 +695,21 @@ let saveNative = async(name, type, endpoint, symbol, interval, opt, folder) => {
 
     }
 
-    return {
+    //r, failed與gaps只在非空時出現(全部成功且無缺根時回傳與既有相同)
+    let r = {
         timeKeep,
         timeLast,
         items,
     }
+    if (size(failed) > 0) {
+        r.failed = failed
+    }
+    let gaps = gs.list(new Set(map(rts.slice(0, -1), 'tag')))
+    if (size(gaps) > 0) {
+        r.gaps = gaps
+    }
+
+    return r
 }
 
 
@@ -531,7 +728,7 @@ export default saveData
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Nov 19 2026 16:51:42 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Nov 19 2026 22:42:53 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

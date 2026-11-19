@@ -1,6 +1,6 @@
 {
   "name": "w-dwdata-binance",
-  "version": "1.0.62",
+  "version": "1.0.63",
   "main": "dist/w-dwdata-binance.umd.js",
   "dependencies": {
     "axios": "^1.21.0",

@@ -69,6 +69,7 @@ describe('unit-aggregateData', function() {
         assert.strictEqual(out[0], [fmt(t0), '0.1', '0.5', '-0.5', '0.125', '6.75', fmt(t0 + 6 * H - 1000), '0', '6', '0.123', '10.75'].join(', '))
         //目標根 B(第 3~5 根)缺第 4 根: 不輸出, missing 為 gap
         assert.strictEqual(out.length, 1)
+        //缺之基底根無紀錄且其分段未列為本次請求失敗(成因全為 unknown): 不附成因欄, 同既有
         assert.deepStrictEqual(r.missing[0], { time: fmt(t0 + 6 * H), have: 2, need: 3, reason: 'gap' })
         assert.deepStrictEqual(r.segments, [{ tag: ot.tz(t0, tz).format('YYYYMMDDHHmmss'), n: 1 }])
         assert.strictEqual(r.timeLast, fmt(t0))

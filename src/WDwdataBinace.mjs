@@ -2,6 +2,7 @@ import downloadData from './downloadData.mjs'
 import saveData from './saveData.mjs'
 import syncData from './syncData.mjs'
 import getIntervalPlan from './intervals.mjs'
+import readGaps from './gaps.mjs'
 
 
 let WDwdataBinace = () => {
@@ -10,6 +11,7 @@ let WDwdataBinace = () => {
         saveData,
         syncData,
         getIntervalPlan,
+        readGaps,
     }
     return r
 }
