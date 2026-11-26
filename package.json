@@ -1,10 +1,10 @@
 {
   "name": "w-dwdata-binance",
-  "version": "1.0.71",
+  "version": "1.0.72",
   "main": "dist/w-dwdata-binance.umd.js",
   "dependencies": {
     "axios": "^1.21.1",
-    "wsemi": "^1.9.78"
+    "wsemi": "^1.9.79"
   },
   "devDependencies": {
     "w-package-tools": "^1.1.31"
